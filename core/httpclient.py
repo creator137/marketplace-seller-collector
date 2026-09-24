@@ -27,12 +27,21 @@ class HttpError(Exception):
         super().__init__(message)
         self.status = status
 
+    @property
+    def blocked(self):
+        return self.status in (403, 406, 451, 498)
+
+    @property
+    def rate_limited(self):
+        return self.status == 429
+
 
 class HttpClient:
     """Sync session wrapper with browser-like headers, cookies and retries."""
 
     def __init__(self, cookies: dict | None = None, referer: str = "", headers: dict | None = None):
         self.session = cffi_requests.Session(impersonate=IMPERSONATE)
+        self.stats = {"requests": 0, "2xx": 0, "403": 0, "429": 0, "5xx": 0, "other": 0}
         if cookies:
             self.session.cookies.update(cookies)
         self.base_headers = {
@@ -75,16 +84,28 @@ class HttpClient:
             if headers:
                 merged.update(headers)
             try:
+                self.stats["requests"] += 1
                 resp = self.session.request(
                     method, url, params=params, headers=merged, timeout=timeout, json=json_payload,
                 )
-                if resp.status_code in (403, 429) or resp.status_code >= 500:
+                if 200 <= resp.status_code < 300:
+                    self.stats["2xx"] += 1
+                elif str(resp.status_code) in self.stats:
+                    self.stats[str(resp.status_code)] += 1
+                elif resp.status_code >= 500:
+                    self.stats["5xx"] += 1
+                else:
+                    self.stats["other"] += 1
+                # A block/session failure is actionable and must not be retried
+                # as if it were a transient network problem.  429 and 5xx get
+                # bounded exponential backoff below.
+                if resp.status_code in (403, 406, 451, 498) or resp.status_code == 429 or resp.status_code >= 500:
                     raise HttpError(f"HTTP {resp.status_code} for {url}", status=resp.status_code)
                 return resp
             except HttpError as exc:
                 last_exc = exc
                 log.warning("HTTP %s (attempt %d/%d): %s", exc.status, attempt, retries, exc)
-                if attempt == retries:
+                if exc.blocked or attempt == retries:
                     raise
             except Exception as exc:  # network-level
                 last_exc = exc

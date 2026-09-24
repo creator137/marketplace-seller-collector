@@ -12,8 +12,8 @@ import re
 
 from django.conf import settings
 
-from core.adapters.base import MarketplaceAdapter, SellerData
-from core.httpclient import HttpClient
+from core.adapters.base import CollectionBlocked, CollectionParseError, MarketplaceAdapter, SellerData
+from core.httpclient import HttpClient, HttpError
 
 log = logging.getLogger("core.adapters.ym")
 
@@ -40,6 +40,7 @@ class YandexMarketAdapter(MarketplaceAdapter):
     code = "yandex_market"
 
     def __init__(self):
+        self.last_page = 0
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.YANDEX_MARKET_COOKIES),
             referer=BASE,
@@ -50,12 +51,16 @@ class YandexMarketAdapter(MarketplaceAdapter):
     def get_categories(self):
         return []
 
-    def discover_sellers(self, category, city=None, limit=50):
+    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
+        limit = max_sellers if max_sellers is not None else limit
         params = {"text": category.external_id, "page": "1"}
         if category.external_id.isdigit():
             params = {"hid": category.external_id, "page": "1"}
         found = {}
-        for page in (1, 2):
+        seen_items = set()
+        page = 1
+        while True:
+            self.last_page = page
             params["page"] = str(page)
             try:
                 resp = self.client.get(f"{BASE}/search", params=params)
@@ -63,10 +68,25 @@ class YandexMarketAdapter(MarketplaceAdapter):
                     log.warning("YM search HTTP %s", resp.status_code)
                     break
                 snippets = parse_snippets(resp.text)
+            except HttpError as exc:
+                if exc.blocked:
+                    raise CollectionBlocked(str(exc)) from exc
+                raise
             except Exception as exc:
                 log.warning("YM search failed: %s", exc)
+                raise
+            if not snippets and re.search(r"captcha|робот|доступ ограничен|проверка", resp.text, re.I):
+                raise CollectionBlocked("Yandex Market returned a protection page")
+            if not snippets:
                 break
+            page_new = 0
             for sn in snippets:
+                item_key = str(sn.get("marketSku") or sn.get("sku") or sn.get("title") or "")
+                if item_key and item_key in seen_items:
+                    continue
+                if item_key:
+                    seen_items.add(item_key)
+                    page_new += 1
                 sid = sn.get("supplierId") or sn.get("shopId")
                 if not sid:
                     continue
@@ -84,8 +104,14 @@ class YandexMarketAdapter(MarketplaceAdapter):
                         category_refs=[category.external_id] if category else [],
                         raw={"marketSku": sn.get("marketSku"), "title": sn.get("title")},
                     )
-                if len(found) >= limit:
+                if limit and len(found) >= limit:
                     return list(found.values())
+            if page > 1 and page_new == 0:
+                break
+            page += 1
+            if page > 10000:
+                log.warning("Yandex Market pagination safety stop at page %s", page)
+                break
         return list(found.values())
 
     def fetch_seller(self, ref: str) -> SellerData | None:

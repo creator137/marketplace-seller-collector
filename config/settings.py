@@ -105,6 +105,10 @@ YANDEX_MARKET_COOKIES = os.getenv("YANDEX_MARKET_COOKIES", "")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "30"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "3"))
 HTTP_RATE_DELAY = float(os.getenv("HTTP_RATE_DELAY", "1.0"))
+COLLECT_MAX_SELLERS = int(os.getenv("COLLECT_MAX_SELLERS", "0"))
+COLLECT_CONCURRENCY = int(os.getenv("COLLECT_CONCURRENCY", "3"))
+COLLECT_DETAIL_CHUNK = int(os.getenv("COLLECT_DETAIL_CHUNK", "100"))
+COLLECT_PROGRESS_BATCH = int(os.getenv("COLLECT_PROGRESS_BATCH", "25"))
 
 # DaData enrichment TTL (days): skip re-enrichment for fresh records.
 DADATA_TTL_DAYS = int(os.getenv("DADATA_TTL_DAYS", "30"))

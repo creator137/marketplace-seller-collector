@@ -72,10 +72,9 @@ def xlsx_response(sellers, filename: str) -> http.HttpResponse:
 
 def export_job_xlsx(job_id: int) -> http.HttpResponse:
     job = CollectionJob.objects.get(pk=job_id)
-    sellers = Seller.objects.filter(
-        marketplace=job.marketplace,
-        categories__in=job.categories.all(),
-    ).distinct()
+    sellers = Seller.objects.filter(collection_links__job=job).distinct()
+    if job.cities.exists():
+        sellers = sellers.filter(city__in=job.cities.all()).distinct()
     return xlsx_response(sellers, f"job-{job_id}-sellers.xlsx")
 
 

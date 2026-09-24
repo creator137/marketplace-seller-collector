@@ -16,13 +16,14 @@ from urllib.parse import quote
 
 from django.conf import settings
 
-from core.adapters.base import MarketplaceAdapter, SellerData
-from core.httpclient import HttpClient, ozon_request_id_headers
+from core.adapters.base import CollectionBlocked, CollectionParseError, CollectionTemporaryError, MarketplaceAdapter, SellerData
+from core.httpclient import HttpClient, HttpError, ozon_request_id_headers
 
 log = logging.getLogger("core.adapters.ozon")
 
 BASE = "https://www.ozon.ru"
 API = f"{BASE}/api/entrypoint-api.bx/page/json/v2"
+COMPOSER_API = "https://api.ozon.ru/composer-api.bx/page/json/v2"
 
 API_HEADERS = {
     "accept": "application/json",
@@ -85,6 +86,7 @@ class OzonAdapter(MarketplaceAdapter):
     code = "ozon"
 
     def __init__(self):
+        self.last_page = 0
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.OZON_COOKIES),
             referer=BASE,
@@ -92,14 +94,27 @@ class OzonAdapter(MarketplaceAdapter):
         )
 
     def _api_get(self, page_path: str) -> dict | None:
-        url = f"{API}?url={quote(page_path, safe='')}"
-        try:
-            resp = self.client.get(url, headers=ozon_request_id_headers())
-            data = resp.json()
-            if isinstance(data, dict):
-                return data
-        except Exception as exc:
-            log.warning("Ozon API %s failed: %s", page_path[:80], exc)
+        errors = []
+        for endpoint in (API, COMPOSER_API):
+            url = f"{endpoint}?url={quote(page_path, safe='')}"
+            try:
+                resp = self.client.get(url, headers=ozon_request_id_headers())
+                data = resp.json()
+                if isinstance(data, dict):
+                    return data
+                errors.append(f"{endpoint}: non-object JSON")
+            except HttpError as exc:
+                errors.append(str(exc))
+                if exc.blocked:
+                    continue
+            except ValueError as exc:
+                errors.append(f"{endpoint}: non-JSON")
+        if errors and any("HTTP 403" in error or "HTTP 498" in error for error in errors):
+            raise CollectionBlocked("Ozon endpoints blocked: " + "; ".join(errors))
+        if errors:
+            if any("non-JSON" in error for error in errors):
+                raise CollectionParseError("Ozon endpoints returned invalid payloads: " + "; ".join(errors)[-1000:])
+            raise CollectionTemporaryError("Ozon endpoints unavailable: " + "; ".join(errors)[-1000:])
         return None
 
     def _api_get_stable(self, page_path: str, attempts: int = 3) -> dict | None:
@@ -117,17 +132,19 @@ class OzonAdapter(MarketplaceAdapter):
     def get_categories(self):
         return []
 
-    def discover_sellers(self, category, city=None, limit=50):
+    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
         """Category/search page -> products -> seller per product (deduped)."""
+        limit = max_sellers if max_sellers is not None else limit
         path = category.external_id
         if path and not path.startswith("/"):
             path = f"/search/?text={path}&from_global=true"
         found: dict[str, SellerData] = {}
 
-        for page_path in self._category_pages(path, max_pages=2):
+        for page_path in self._category_pages(path):
+            self.last_page += 1
             data = self._api_get_stable(page_path)
             if not data:
-                break
+                raise CollectionBlocked("Ozon returned an empty/protection response")
 
             # Fallback path A: sellerList widget on dedicated sellers pages
             state = widget_state(data, "sellerList")
@@ -144,7 +161,7 @@ class OzonAdapter(MarketplaceAdapter):
                     category_refs=[category.external_id] if category else [],
                     raw={"deeplink": item.get("deeplink")},
                 )
-                if len(found) >= limit:
+                if limit and len(found) >= limit:
                     return list(found.values())
 
             # Main path: products -> seller widget on product page
@@ -167,19 +184,21 @@ class OzonAdapter(MarketplaceAdapter):
                     category_refs=[category.external_id] if category else [],
                     raw={"product": product_path},
                 )
-                if len(found) >= limit:
+                if limit and len(found) >= limit:
                     return list(found.values())
-                time.sleep(settings.HTTP_RATE_DELAY)
+                if settings.HTTP_RATE_DELAY:
+                    time.sleep(settings.HTTP_RATE_DELAY)
 
-            if not data.get("nextPage"):
+            next_page = data.get("nextPage") or data.get("next_page")
+            if not next_page:
                 break
+            path = next_page
         return list(found.values())
 
-    def _category_pages(self, path, max_pages=2):
+    def _category_pages(self, path):
+        # Kept as a generator for fixture compatibility.  Real pagination is
+        # driven by Ozon's nextPage cursor in discover_sellers.
         yield path
-        for i in range(2, max_pages + 1):
-            sep = "&" if "?" in path else "?"
-            yield f"{path}{sep}page={i}"
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         """Seller page -> sellerTransparency widget (full title) / legacy profile."""

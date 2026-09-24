@@ -13,6 +13,10 @@
 - таблица результатов с фильтрами, история запусков, прогресс job'а (HTMX polling);
 - экспорт в XLSX (текущий job / все продавцы);
 - Telegram-ссылка формируется технически из мобильного номера (не признак наличия аккаунта).
+- discovery и detail разделены: seller references сохраняются в `CollectionJobSeller`, затем выполняются detail/enrichment;
+- пагинация идёт до конца выдачи или `COLLECT_MAX_SELLERS` (0 — без программного лимита), с checkpoint/resume;
+- `BLOCKED`, `RATE_LIMITED`, `TEMPORARY_ERROR`, `PARSE_ERROR` не превращаются в успешный пустой job;
+- endurance-проверка: `python manage.py endurance_marketplaces --marketplace ozon --query "наушники" --target 100`.
 
 ## Запуск через Docker
 
@@ -44,6 +48,7 @@ python manage.py runserver
 python manage.py test core                          # все тесты, без live-интернета
 python manage.py smoke_marketplaces --limit 5       # live-проверка всех маркетплейсов
 python manage.py smoke_marketplaces --limit 5 --marketplace yandex_market
+python manage.py endurance_marketplaces --marketplace wildberries --query "наушники" --target 1000
 ```
 
 ## Категории и города
@@ -64,8 +69,9 @@ WB_COOKIES=
 YANDEX_MARKET_COOKIES=
 ```
 
-Без cookies адаптеры деградируют мягко: job завершается с 0 найденных,
-лог содержит HTTP 403/429. Реальные cookies и токены не коммитятся в git.
+Без cookies job не объявляется успешным пустым результатом: источник получает
+статус `blocked`/`rate_limited`, checkpoint сохраняется, а job можно продолжить
+из страницы задачи после добавления cookies. Реальные cookies и токены не коммитятся в git.
 
 ## Enrichment (DaData)
 

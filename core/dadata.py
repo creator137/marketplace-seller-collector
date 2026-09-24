@@ -43,7 +43,7 @@ def party_to_fields(party: dict) -> dict:
     data = party.get("data") or {}
     phones = [p.get("value", "") for p in (data.get("phones") or []) if p.get("value")]
     emails = [e.get("value", "") for e in (data.get("emails") or []) if e.get("value")]
-    website = ""
+    website = data.get("website") or data.get("site") or ""
     doc = data.get("management") or {}
     return {
         "name": party.get("value") or party.get("unrestricted_value") or "",

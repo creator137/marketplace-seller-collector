@@ -76,7 +76,7 @@ def merge_seller_data(seller: Seller, data: SellerData) -> bool:
     if data.website:
         changed |= _merge_contact(seller, "site", data.website, SellerContact.SOURCE_MARKETPLACE)
     if data.raw:
-        seller.raw = data.raw
+        seller.raw = {**(seller.raw or {}), **data.raw}
         changed = True
     return changed
 
@@ -142,6 +142,7 @@ def enrich_with_dadata(seller: Seller, force=False) -> bool:
     _update_field(seller, "name", fields["name"])
     _update_field(seller, "ogrn", fields["ogrn"])
     _update_field(seller, "legal_address", fields["legal_address"])
+    _update_field(seller, "website", normalize_url(fields.get("website") or ""))
     if fields["legal_address"] and not seller.legal_address:
         changed = True
     if fields["ogrn"] and not seller.ogrn:

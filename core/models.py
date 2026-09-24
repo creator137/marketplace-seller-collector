@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 
 class Marketplace(models.TextChoices):
@@ -157,6 +158,7 @@ class CollectionJob(models.Model):
     class Status(models.TextChoices):
         QUEUED = "queued", "В очереди"
         RUNNING = "running", "Выполняется"
+        PAUSED = "paused", "Приостановлен"
         COMPLETED = "completed", "Завершён"
         FAILED = "failed", "Ошибка"
 
@@ -170,6 +172,10 @@ class CollectionJob(models.Model):
     found = models.PositiveIntegerField("Найдено", default=0)
     errors_count = models.PositiveIntegerField("Ошибок", default=0)
     error_message = models.TextField(blank=True, default="")
+    source_status = models.CharField(max_length=32, default="queued", db_index=True)
+    last_error = models.TextField(blank=True, default="")
+    retry_after = models.DateTimeField(null=True, blank=True)
+    checkpoint = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -181,3 +187,33 @@ class CollectionJob(models.Model):
 
     def __str__(self):
         return f"Job #{self.pk} {self.get_marketplace_display()} [{self.status}]"
+
+    def fail(self, message, source_status="temporary_error"):
+        self.status = self.Status.FAILED
+        self.source_status = source_status
+        self.error_message = (message or "")[:2000]
+        self.last_error = self.error_message
+        self.finished_at = timezone.now()
+        self.save(update_fields=["status", "source_status", "error_message", "last_error", "finished_at"])
+
+
+class CollectionJobSeller(models.Model):
+    """The immutable discovery ledger for one job, including partial details."""
+
+    job = models.ForeignKey(CollectionJob, on_delete=models.CASCADE, related_name="job_sellers")
+    seller = models.ForeignKey(Seller, null=True, blank=True, on_delete=models.SET_NULL, related_name="collection_links")
+    external_seller_id = models.CharField(max_length=128)
+    category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL)
+    city = models.ForeignKey(City, null=True, blank=True, on_delete=models.SET_NULL)
+    discovered_at = models.DateTimeField(auto_now_add=True)
+    detail_status = models.CharField(max_length=24, default="pending", db_index=True)
+    detail_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["job", "external_seller_id"], name="uniq_job_seller_ref"),
+        ]
+        indexes = [
+            models.Index(fields=["job", "detail_status"]),
+            models.Index(fields=["external_seller_id"]),
+        ]

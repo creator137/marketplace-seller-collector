@@ -61,7 +61,9 @@ def job_detail(request, job_id):
 
 
 def _job_stats(job):
-    base = Seller.objects.filter(marketplace=job.marketplace, categories__in=job.categories.all()).distinct()
+    base = Seller.objects.filter(collection_links__job=job).distinct()
+    if job.cities.exists():
+        base = base.filter(city__in=job.cities.all()).distinct()
     return {
         "total": base.count(),
         "with_phones": base.filter(contacts__type__in=("phone", "city_phone")).distinct().count(),
@@ -83,11 +85,17 @@ def results(request):
     city_id = request.GET.get("city", "")
     has_contacts = request.GET.get("has_contacts", "")
     q = request.GET.get("q", "").strip()
+    job_id = request.GET.get("job", "")
     page = int(request.GET.get("page", "1") or 1)
 
     qs = Seller.objects.select_related("city").prefetch_related("contacts", "categories")
     if marketplace in Marketplace.values:
         qs = qs.filter(marketplace=marketplace)
+    if job_id.isdigit():
+        qs = qs.filter(collection_links__job_id=int(job_id)).distinct()
+        job_filter = CollectionJob.objects.filter(pk=int(job_id)).first()
+        if job_filter and job_filter.cities.exists():
+            qs = qs.filter(city__in=job_filter.cities.all()).distinct()
     if city_id:
         qs = qs.filter(city_id=city_id)
     if has_contacts:
@@ -111,6 +119,7 @@ def results(request):
         "cities": City.objects.all(), "marketplace": marketplace,
         "view_marketplaces": Marketplace.choices,
         "city_id": city_id, "has_contacts": has_contacts, "q": q,
+        "job_id": job_id,
         "querystring": qs_str,
     })
 
@@ -119,6 +128,19 @@ def results(request):
 @require_POST
 def export_job(request, job_id):
     return export_job_xlsx(job_id)
+
+
+@login_required
+@require_POST
+def resume_job(request, job_id):
+    job = CollectionJob.objects.get(pk=job_id)
+    job.status = CollectionJob.Status.QUEUED
+    job.save(update_fields=["status"])
+    try:
+        _rq_queue().enqueue(run_collection_job, job.id)
+    except Exception:
+        run_collection_job(job.id)
+    return redirect("job_detail", job_id=job.id)
 
 
 @login_required

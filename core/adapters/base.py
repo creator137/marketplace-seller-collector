@@ -24,6 +24,28 @@ class SellerData:
     raw: dict = field(default_factory=dict)
 
 
+class CollectionError(Exception):
+    """A classified adapter failure; never silently becomes an empty result."""
+
+    status = "temporary_error"
+
+
+class CollectionBlocked(CollectionError):
+    status = "blocked"
+
+
+class CollectionRateLimited(CollectionError):
+    status = "rate_limited"
+
+
+class CollectionTemporaryError(CollectionError):
+    status = "temporary_error"
+
+
+class CollectionParseError(CollectionError):
+    status = "parse_error"
+
+
 class MarketplaceAdapter:
     """Compact common interface for marketplace collectors."""
 
@@ -33,7 +55,7 @@ class MarketplaceAdapter:
         """Yield {external_id, title, parent_external_id?} dicts (may be admin-seeded)."""
         raise NotImplementedError
 
-    def discover_sellers(self, category, city=None, limit=50) -> Iterable[SellerData]:
+    def discover_sellers(self, category, city=None, limit=0, max_sellers=None) -> Iterable[SellerData]:
         """Find sellers for a category (optionally city-scoped)."""
         raise NotImplementedError
 

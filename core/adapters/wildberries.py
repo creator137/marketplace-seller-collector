@@ -10,7 +10,7 @@ import re
 
 from django.conf import settings
 
-from core.adapters.base import MarketplaceAdapter, SellerData
+from core.adapters.base import CollectionBlocked, CollectionParseError, MarketplaceAdapter, SellerData
 from core.httpclient import HttpClient
 
 log = logging.getLogger("core.adapters.wb")
@@ -34,6 +34,7 @@ class WildberriesAdapter(MarketplaceAdapter):
     code = "wildberries"
 
     def __init__(self):
+        self.last_page = 0
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.WB_COOKIES),
             headers=BASE_HEADERS,
@@ -67,8 +68,9 @@ class WildberriesAdapter(MarketplaceAdapter):
                 })
         return out
 
-    def discover_sellers(self, category, city=None, limit=50):
+    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
         """Search category -> products -> supplierId/supplier/supplierRating."""
+        limit = max_sellers if max_sellers is not None else limit
         shard, _, query = (category.external_id or "").partition("|")
         query = query or category.external_id
         params = {
@@ -76,31 +78,54 @@ class WildberriesAdapter(MarketplaceAdapter):
             "query": query, "resultset": "catalog", "page": "1",
             "sort": "popular", "spp": "30", "suppressSpellcheck": "false",
         }
-        products = []
-        try:
-            resp = self.client.get(SEARCH_URL, params=params)
-            data = resp.json()
-            products = (data.get("data") or data).get("products") or []
-        except Exception as exc:
-            log.warning("WB search failed: %s", exc)
-            return []
         found = {}
-        for p in products:
-            sid = p.get("supplierId") or p.get("supplier")
-            if sid is None:
-                continue
-            sid = str(sid)
-            if sid not in found:
-                found[sid] = SellerData(
-                    marketplace=self.code,
-                    external_seller_id=sid,
-                    seller_url=f"https://www.wildberries.ru/seller/{sid}",
-                    name=p.get("supplier") or p.get("supplierName") or "",
-                    rating=str(p.get("supplierRating") or "") if p.get("supplierRating") else "",
-                    category_refs=[category.external_id] if category else [],
-                    raw={"product": p.get("id"), "brand": p.get("brand")},
-                )
-            if len(found) >= limit:
+        seen_products = set()
+        page = 1
+        while True:
+            params["page"] = str(page)
+            self.last_page = page
+            try:
+                resp = self.client.get(SEARCH_URL, params=params)
+                data = resp.json()
+            except ValueError as exc:
+                raise CollectionParseError(f"WB returned non-JSON on page {page}") from exc
+            except Exception as exc:
+                if isinstance(exc, (CollectionBlocked, CollectionParseError)):
+                    raise
+                log.warning("WB search failed on page %s: %s", page, exc)
+                raise
+            products = (data.get("data") or data).get("products") or []
+            if not products:
+                break
+            page_new = 0
+            for p in products:
+                product_key = str(p.get("id") or p.get("nmId") or "")
+                if product_key and product_key in seen_products:
+                    continue
+                if product_key:
+                    seen_products.add(product_key)
+                    page_new += 1
+                sid = p.get("supplierId") or p.get("supplier")
+                if sid is None:
+                    continue
+                sid = str(sid)
+                if sid not in found:
+                    found[sid] = SellerData(
+                        marketplace=self.code,
+                        external_seller_id=sid,
+                        seller_url=f"https://www.wildberries.ru/seller/{sid}",
+                        name=p.get("supplier") or p.get("supplierName") or "",
+                        rating=str(p.get("supplierRating") or "") if p.get("supplierRating") else "",
+                        category_refs=[category.external_id] if category else [],
+                        raw={"product": p.get("id"), "brand": p.get("brand")},
+                    )
+                if limit and len(found) >= limit:
+                    return list(found.values())
+            if page > 1 and page_new == 0:
+                break
+            page += 1
+            if page > 10000:
+                log.warning("WB pagination safety stop at page %s", page)
                 break
         return list(found.values())
 
