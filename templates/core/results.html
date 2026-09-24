@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Продавцы{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h2 class="card-title">Продавцы ({{ total }})</h2>
+    <a class="btn btn-primary btn-sm" href="{% url 'export_all' %}">Export all sellers</a>
+  </div>
+  <form class="card-body row g-2" method="get">
+    <div class="col-auto">
+      <select name="marketplace" class="form-select">
+        <option value="">Все маркетплейсы</option>
+        {% for value, label in view_marketplaces %}
+          <option value="{{ value }}" {% if marketplace == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <select name="city" class="form-select">
+        <option value="">Все города</option>
+        {% for city in cities %}
+          <option value="{{ city.id }}" {% if city_id == city.id|stringformat:"s" %}selected{% endif %}>{{ city.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <input class="form-control" type="text" name="q" placeholder="Название/ИНН/адрес" value="{{ q }}">
+    </div>
+    <div class="col-auto form-check align-self-center ms-2">
+      <input class="form-check-input" type="checkbox" name="has_contacts" value="1" id="hc" {% if has_contacts %}checked{% endif %}>
+      <label class="form-check-label" for="hc">Только с контактами</label>
+    </div>
+    <div class="col-auto"><button class="btn btn-outline-primary" type="submit">Фильтр</button></div>
+  </form>
+  <div class="table-responsive">
+    <table class="table card-table table-vcenter">
+      <thead><tr><th>Маркетплейс</th><th>Продавец</th><th>Город</th><th>ИНН</th><th>Телефоны</th><th>Email</th><th>Рейтинг</th><th>Обновлён</th><th>URL</th></tr></thead>
+      <tbody>
+      {% for s in sellers %}
+        <tr>
+          <td>{{ s.get_marketplace_display }}</td>
+          <td>{{ s.name|default:s.external_seller_id }}</td>
+          <td>{{ s.city.name|default:"—" }}</td>
+          <td>{{ s.inn|default:"—" }}</td>
+          <td>{{ s.phone_list|join:", "|default:"—" }}</td>
+          <td>{{ s.emails|join:", "|default:"—" }}</td>
+          <td>{{ s.rating|default:"—" }}</td>
+          <td>{{ s.last_updated_at|date:"d.m.Y" }}</td>
+          <td>{% if s.seller_url %}<a href="{{ s.seller_url }}" target="_blank" rel="noopener">открыть</a>{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="9" class="text-center text-muted">Нет данных</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer d-flex align-items-center">
+    <div>Страница {{ page }} из {{ pages }}</div>
+    <div class="ms-auto">
+      {% if page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="?{{ querystring }}page={{ page|add:'-1' }}">←</a>{% endif %}
+      {% if page < pages %}<a class="btn btn-sm btn-outline-secondary" href="?{{ querystring }}page={{ page|add:'1' }}">→</a>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

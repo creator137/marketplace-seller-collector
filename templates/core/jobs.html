@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}История запусков{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header"><h2 class="card-title">История запусков</h2></div>
+  <div class="table-responsive">
+    <table class="table card-table table-vcenter">
+      <thead><tr><th>#</th><th>Маркетплейс</th><th>Статус</th><th>Города</th><th>Категории</th><th>Обработано</th><th>Найдено</th><th>Ошибки</th><th>Создан</th><th></th></tr></thead>
+      <tbody>
+      {% for job in jobs %}
+        <tr>
+          <td>{{ job.id }}</td>
+          <td>{{ job.get_marketplace_display }}</td>
+          <td><span class="badge {% if job.status == 'completed' %}bg-success{% elif job.status == 'failed' %}bg-danger{% elif job.status == 'running' %}bg-blue{% else %}bg-secondary{% endif %}">{{ job.get_status_display }}</span></td>
+          <td>{% for c in job.cities.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</td>
+          <td>{% for c in job.categories.all|slice:":3" %}{{ c.title }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if job.categories.count > 3 %}…{% endif %}</td>
+          <td>{{ job.processed }}{% if job.total %}/{{ job.total }}{% endif %}</td>
+          <td>{{ job.found }}</td>
+          <td>{{ job.errors_count }}</td>
+          <td>{{ job.created_at|date:"d.m.Y H:i" }}</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="{% url 'job_detail' job.id %}">Открыть</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="10" class="text-center text-muted">Пока нет задач</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

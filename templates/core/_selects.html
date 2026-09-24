@@ -1,0 +1,19 @@
+<div class="mb-3">
+  <label class="form-label">Города</label>
+  <select name="cities" class="form-select" multiple size="4">
+    {% for city in cities %}
+      <option value="{{ city.id }}">{{ city.name }}</option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">Города редактируются в Django Admin.</small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Категории</label>
+  <select name="categories" class="form-select" multiple size="8" required>
+    {% for cat in categories %}
+      <option value="{{ cat.id }}">{{ cat.title }}</option>
+    {% empty %}
+      <option disabled>Категории не заданы — добавьте их в Django Admin</option>
+    {% endfor %}
+  </select>
+</div>

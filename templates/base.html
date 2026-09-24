@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Seller Collector{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta17/dist/css/tabler.min.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body class="theme-light">
+<div class="page">
+  <header class="navbar navbar-expand-md d-print-none">
+    <div class="container-xl">
+      <h1 class="navbar-brand mb-0"><a href="{% url 'dashboard' %}">Seller Collector</a></h1>
+      <div class="navbar-nav flex-row order-md-last">
+        <a class="nav-link" href="{% url 'dashboard' %}">Сбор</a>
+        <a class="nav-link" href="{% url 'jobs' %}">История</a>
+        <a class="nav-link" href="{% url 'results' %}">Продавцы</a>
+        <a class="nav-link" href="/admin/">Admin</a>
+        <form method="post" action="{% url 'logout' %}" class="ms-2">{% csrf_token %}
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Выйти</button>
+        </form>
+      </div>
+    </div>
+  </header>
+  <div class="page-wrapper">
+    <div class="page-body">
+      <div class="container-xl">
+        {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

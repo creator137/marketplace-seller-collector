@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Новый сбор{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header"><h2 class="card-title">Новый сбор продавцов</h2></div>
+      <div class="card-body">
+        <form method="post" id="collect-form">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">Маркетплейс</label>
+            <select name="marketplace" id="marketplace" class="form-select"
+                    hx-get="{% url 'selects' %}" hx-target="#selects" hx-trigger="change, load">
+              {% for value, label in marketplaces %}
+                <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id="selects" hx-get="{% url 'selects' %}" hx-target="this" hx-trigger="load"
+               hx-vals='{"marketplace": "ozon"}'></div>
+          <button type="submit" class="btn btn-primary">Начать сбор</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
