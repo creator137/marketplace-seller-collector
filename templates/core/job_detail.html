@@ -15,6 +15,7 @@
       {% elif job.status == 'failed' %}bg-danger
       {% elif job.status == 'running' %}bg-blue
       {% else %}bg-secondary{% endif %} mb-2">{{ job.get_status_display }}</span>
+    <div class="text-muted small mb-2">Источник: {{ job.source_status }}{% if job.retry_after %}; повторить после {{ job.retry_after|date:"d.m.Y H:i" }}{% endif %}</div>
     <div class="progress mb-2" style="height:6px">
       <div class="progress-bar bg-primary" style="width: {% widthratio job.processed job.total|default:1 100 %}%"></div>
     </div>
@@ -34,7 +35,9 @@
     {% endif %}
     {% if job.status == 'completed' or job.status == 'failed' or job.status == 'paused' %}
       <div class="row mt-3">
-        <div class="col-sm"><b>Всего продавцов:</b> {{ stats.total }}</div>
+        <div class="col-sm"><b>Найдено refs:</b> {{ stats.discovered }}</div>
+        <div class="col-sm"><b>В выбранных городах:</b> {{ stats.matched_cities }}</div>
+        <div class="col-sm"><b>Город неизвестен:</b> {{ stats.unknown_city }}</div>
         <div class="col-sm"><b>С телефонами:</b> {{ stats.with_phones }}</div>
         <div class="col-sm"><b>С email:</b> {{ stats.with_email }}</div>
         <div class="col-sm"><b>С сайтом:</b> {{ stats.with_site }}</div>

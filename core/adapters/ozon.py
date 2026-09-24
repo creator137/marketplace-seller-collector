@@ -36,6 +36,12 @@ API_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     ),
 }
+COMPOSER_HEADERS = {
+    "accept": "application/json",
+    "content-type": "application/json",
+    "x-o3-app-name": "ozonapp_android",
+    "user-agent": "okhttp/4.12.0",
+}
 
 SELLER_URL_RE = re.compile(r"/seller/(\d+)")
 SELLER_ID_RE = re.compile(r"seller[\"/]+(\d+)")
@@ -87,6 +93,7 @@ class OzonAdapter(MarketplaceAdapter):
 
     def __init__(self):
         self.last_page = 0
+        self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.OZON_COOKIES),
             referer=BASE,
@@ -98,7 +105,10 @@ class OzonAdapter(MarketplaceAdapter):
         for endpoint in (API, COMPOSER_API):
             url = f"{endpoint}?url={quote(page_path, safe='')}"
             try:
-                resp = self.client.get(url, headers=ozon_request_id_headers())
+                endpoint_headers = dict(COMPOSER_HEADERS if endpoint == COMPOSER_API else API_HEADERS)
+                if endpoint == API:
+                    endpoint_headers.update(ozon_request_id_headers())
+                resp = self.client.get(url, headers=endpoint_headers)
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
@@ -108,8 +118,10 @@ class OzonAdapter(MarketplaceAdapter):
                 if exc.blocked:
                     continue
             except ValueError as exc:
-                errors.append(f"{endpoint}: non-JSON")
-        if errors and any("HTTP 403" in error or "HTTP 498" in error for error in errors):
+                body = str(getattr(resp, "text", ""))
+                marker = " protection page" if re.search(r"captcha|cloudflare|robot|проверка", body, re.I) else " non-JSON"
+                errors.append(f"{endpoint}:{marker}")
+        if errors and any("HTTP 403" in error or "HTTP 498" in error or "protection page" in error for error in errors):
             raise CollectionBlocked("Ozon endpoints blocked: " + "; ".join(errors))
         if errors:
             if any("non-JSON" in error for error in errors):
@@ -132,27 +144,34 @@ class OzonAdapter(MarketplaceAdapter):
     def get_categories(self):
         return []
 
-    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
-        """Category/search page -> products -> seller per product (deduped)."""
-        limit = max_sellers if max_sellers is not None else limit
+    def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
+        """Stream one completed Ozon page at a time and emit its next cursor."""
         path = category.external_id
         if path and not path.startswith("/"):
             path = f"/search/?text={path}&from_global=true"
-        found: dict[str, SellerData] = {}
+        page_path = start_cursor or path
+        page_number = max(1, int(start_page or 1))
+        seen_paths = set()
+        seen_sellers = set()
+        total_found = 0
 
-        for page_path in self._category_pages(path):
-            self.last_page += 1
+        while page_path:
+            if page_path in seen_paths:
+                raise CollectionParseError(f"Ozon repeated pagination cursor: {page_path}")
+            seen_paths.add(page_path)
+            self.last_page = page_number
+            self.metrics["pages"] += 1
             data = self._api_get_stable(page_path)
-            if not data:
+            if not data or not data.get("widgetStates"):
                 raise CollectionBlocked("Ozon returned an empty/protection response")
+            page_found: dict[str, SellerData] = {}
 
-            # Fallback path A: sellerList widget on dedicated sellers pages
             state = widget_state(data, "sellerList")
             for item in (state or {}).get("items") or []:
                 m = SELLER_URL_RE.search(item.get("deeplink") or "")
-                if not m or m.group(1) in found:
+                if not m or m.group(1) in seen_sellers:
                     continue
-                found[m.group(1)] = SellerData(
+                page_found[m.group(1)] = SellerData(
                     marketplace=self.code,
                     external_seller_id=m.group(1),
                     seller_url=f"{BASE}/seller/{m.group(1)}/",
@@ -161,11 +180,10 @@ class OzonAdapter(MarketplaceAdapter):
                     category_refs=[category.external_id] if category else [],
                     raw={"deeplink": item.get("deeplink")},
                 )
-                if limit and len(found) >= limit:
-                    return list(found.values())
 
-            # Main path: products -> seller widget on product page
-            for product_path in _tile_products(data):
+            product_paths = _tile_products(data)
+            self.metrics["products"] += len(product_paths)
+            for product_path in product_paths:
                 pdata = self._api_get_stable(product_path)
                 if not pdata:
                     continue
@@ -173,9 +191,9 @@ class OzonAdapter(MarketplaceAdapter):
                 if not pstate:
                     continue
                 sid, name, rating = _seller_from_product_state(pstate)
-                if not sid or sid in found:
+                if not sid or sid in seen_sellers or sid in page_found:
                     continue
-                found[sid] = SellerData(
+                page_found[sid] = SellerData(
                     marketplace=self.code,
                     external_seller_id=sid,
                     seller_url=f"{BASE}/seller/{sid}/",
@@ -184,21 +202,30 @@ class OzonAdapter(MarketplaceAdapter):
                     category_refs=[category.external_id] if category else [],
                     raw={"product": product_path},
                 )
-                if limit and len(found) >= limit:
-                    return list(found.values())
                 if settings.HTTP_RATE_DELAY:
                     time.sleep(settings.HTTP_RATE_DELAY)
 
             next_page = data.get("nextPage") or data.get("next_page")
+            checkpoint = {
+                "page": page_number + 1,
+                "cursor": next_page or None,
+                "next_cursor": next_page or None,
+                "finished": not bool(next_page),
+            }
+            for sid, seller in page_found.items():
+                if max_sellers and total_found >= max_sellers:
+                    break
+                seen_sellers.add(sid)
+                total_found += 1
+                self.metrics["seller_refs"] += 1
+                yield seller, checkpoint
+            yield None, checkpoint
+            if max_sellers and total_found >= max_sellers:
+                break
             if not next_page:
                 break
-            path = next_page
-        return list(found.values())
-
-    def _category_pages(self, path):
-        # Kept as a generator for fixture compatibility.  Real pagination is
-        # driven by Ozon's nextPage cursor in discover_sellers.
-        yield path
+            page_path = next_page
+            page_number += 1
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         """Seller page -> sellerTransparency widget (full title) / legacy profile."""

@@ -61,11 +61,16 @@ def job_detail(request, job_id):
 
 
 def _job_stats(job):
-    base = Seller.objects.filter(collection_links__job=job).distinct()
+    discovered = Seller.objects.filter(collection_links__job=job).distinct()
+    unknown_city = discovered.filter(city=None).count()
+    base = discovered
     if job.cities.exists():
         base = base.filter(city__in=job.cities.all()).distinct()
     return {
         "total": base.count(),
+        "discovered": discovered.count(),
+        "matched_cities": base.count(),
+        "unknown_city": unknown_city,
         "with_phones": base.filter(contacts__type__in=("phone", "city_phone")).distinct().count(),
         "with_email": base.filter(contacts__type="email").distinct().count(),
         "with_site": base.exclude(website="").count(),

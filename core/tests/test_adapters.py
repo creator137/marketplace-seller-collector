@@ -81,7 +81,7 @@ class OzonParsingTest(TestCase):
 
     @patch.object(OzonAdapter, "_api_get")
     def test_discover_sellers_sellerlist_fallback(self, api_get):
-        api_get.return_value = OZON_CATEGORY_RESPONSE
+        api_get.return_value = {**OZON_CATEGORY_RESPONSE, "nextPage": None}
         adapter = OzonAdapter()
         cat = Category(marketplace=Marketplace.OZON, external_id="/category/naushniki-15692/", title="Наушники")
         sellers = adapter.discover_sellers(cat, limit=10)
@@ -122,6 +122,21 @@ class OzonParsingTest(TestCase):
         detail = OzonAdapter().fetch_seller("1981149")
         self.assertEqual(detail.name, "Официальный магазин Bloody")
 
+    @patch.object(OzonAdapter, "_api_get")
+    def test_pagination_streams_multiple_pages(self, api_get):
+        page1 = {"nextPage": "/search/?text=x&page=2", "widgetStates": {
+            "sellerList-1": '{"items":[{"title":"One","deeplink":"/seller/1/"}]}'
+        }}
+        page2 = {"widgetStates": {
+            "sellerList-2": '{"items":[{"title":"Two","deeplink":"/seller/2/"}]}'
+        }}
+        api_get.side_effect = [page1, page2]
+        cat = Category(marketplace=Marketplace.OZON, external_id="x", title="X")
+        adapter = OzonAdapter()
+        sellers = adapter.discover_sellers(cat, max_sellers=10)
+        self.assertEqual([s.external_seller_id for s in sellers], ["1", "2"])
+        self.assertEqual(adapter.last_page, 2)
+
 
 class YandexMarketParsingTest(TestCase):
     def test_parse_snippets(self):
@@ -139,6 +154,22 @@ class YandexMarketParsingTest(TestCase):
         cat = Category(marketplace=Marketplace.YM, external_id="футболка", title="Футболки")
         sellers = YandexMarketAdapter().discover_sellers(cat, limit=10)
         self.assertEqual([s.external_seller_id for s in sellers], ["216408895", "6316787"])
+
+    @patch("core.adapters.yandex_market.HttpClient")
+    def test_pagination(self, client_cls):
+        html1 = YM_SEARCH_HTML.replace("216408895", "1001").replace("6316787", "1002")
+        html2 = YM_SEARCH_HTML.replace("111", "333").replace("222", "444").replace("216408895", "1003").replace("6316787", "1004")
+        responses = []
+        for html in (html1, html2, ""):
+            response = MagicMock(status_code=200)
+            response.text = html
+            responses.append(response)
+        client_cls.return_value.get.side_effect = responses
+        from core.adapters.yandex_market import YandexMarketAdapter
+
+        cat = Category(marketplace=Marketplace.YM, external_id="футболка", title="Футболки")
+        sellers = YandexMarketAdapter().discover_sellers(cat, max_sellers=10)
+        self.assertEqual([s.external_seller_id for s in sellers], ["1001", "1002", "1003", "1004"])
 
 
 class WildberriesParsingTest(TestCase):
@@ -167,3 +198,20 @@ class WildberriesParsingTest(TestCase):
         self.assertEqual(detail.inn, "0277001234")
         seller = upsert_seller(detail)
         self.assertEqual(seller.inn, "0277001234")
+
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_pagination(self, client_cls):
+        first = MagicMock()
+        first.json.return_value = WB_SEARCH_RESPONSE
+        second = MagicMock()
+        second.json.return_value = {"data": {"products": [
+            {"id": 4, "supplierId": 555003, "supplier": "ООО Третий"},
+        ]}}
+        third = MagicMock()
+        third.json.return_value = {"data": {"products": []}}
+        client_cls.return_value.get.side_effect = [first, second, third]
+        from core.adapters.wildberries import WildberriesAdapter
+
+        cat = Category(marketplace=Marketplace.WB, external_id="noski|носки", title="Носки")
+        sellers = WildberriesAdapter().discover_sellers(cat, max_sellers=10)
+        self.assertEqual([s.external_seller_id for s in sellers], ["555001", "555002", "555003"])

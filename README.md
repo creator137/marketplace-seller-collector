@@ -49,6 +49,8 @@ python manage.py test core                          # все тесты, без 
 python manage.py smoke_marketplaces --limit 5       # live-проверка всех маркетплейсов
 python manage.py smoke_marketplaces --limit 5 --marketplace yandex_market
 python manage.py endurance_marketplaces --marketplace wildberries --query "наушники" --target 1000
+python manage.py project_health
+python manage.py project_health --live
 ```
 
 ## Категории и города
@@ -58,10 +60,20 @@ python manage.py endurance_marketplaces --marketplace wildberries --query "на�
 Для Wildberries есть синк категорий из дерева меню: `Category` можно создать из
 `WildberriesAdapter().get_categories()`.
 
-## Cookies маркетплейсов
+## Рабочий flow и cookies маркетплейсов
 
-Ozon и Wildberries отдают данные только при наличии валидных browser-cookies.
-Задаются в `.env` (строка Cookie-заголовка или JSON-словарь):
+1. `docker compose up --build`
+2. войдите в UI;
+3. выберите marketplace, города и категории;
+4. запустите сбор;
+5. при блокировке job получает `paused`, причина и checkpoint видны в UI;
+6. обновите cookies сессии в `.env`, перезапустите worker и нажмите `Продолжить сбор`;
+7. экспортируйте XLSX конкретного job.
+
+В live-проверке 2026-09-24 все три площадки потребовали рабочую browser-сессию:
+Ozon и WB вернули 403/сетевую ошибку, Yandex Market отдал protection page с HTTP 200.
+Автоматический Playwright bootstrap не добавлен: текущая среда не показала рабочий
+browser flow без пользовательской сессии. Cookies задаются в `.env` (строка Cookie-заголовка или JSON-словарь):
 
 ```env
 OZON_COOKIES=
@@ -84,5 +96,6 @@ YANDEX_MARKET_COOKIES=
 - Яндекс.Маркет: список продавцов собирается из выдачи поиска/категорий (supplierId,
   рейтинг); страница продавца (`/seller/<id>/`) защищена и без cookies отдаёт 404 —
   имя/ИНН заполняются частично.
-- Ozon/WB без cookies не собирают данные (антибот); парсеры покрыты fixture-тестами.
-- Не гарантируется 100% продавцов/контактов маркетплейса и обход капчи.
+- Без cookies/рабочей сессии live discovery не гарантируется; protection pages не считаются пустой выдачей.
+- Live target 100/1000/5000/10000 не заявляется без фактического успешного прогона. Текущие результаты — в `MASS_COLLECTION_STATUS.md`.
+- Не гарантируется 100% продавцов/контактов и обход капчи.

@@ -1,34 +1,62 @@
 # Mass collection status
 
-Фактическая live-проверка выполнена 2026-09-24 из текущей среды; endurance smoke
-запущен с target=100 на каждой площадке. Тесты на 1 000/5 000/10 000 продавцов
-не запускались как успешные: источники
-в этой среде заблокированы или сетевой доступ к ним нестабилен. Mock/fixture-тесты
-не считаются live-доказательством.
+Live tests were run from the current environment on 2026-09-24. No result below
+is based on fixtures. All three endurance commands correctly exited non-zero on
+blocked/unavailable discovery.
 
 ## Ozon
 
-- query: `наушники`
-- discovered: 0; endurance: 2 requests, 2×403, 0.59 req/s
-- blocked: да, оба JSON endpoint'а вернули HTTP 403
-- fallback: реализован `entrypoint-api.bx` → `composer-api.bx`
-- limiting factor: доступность сети/сессии Ozon
+- tested_at: `2026-09-24`
+- query/category: `наушники`
+- cookies/session: not configured
+- target: `100`
+- discovered: `0`
+- details: `0/0`
+- INN: `0/0`
+- address: `0/0`
+- pages: `1` attempted, checkpoint not completed
+- requests: `2`
+- 403: `1` (composer request then network/DNS timeout)
+- 429: `0`
+- duration: `5.92s`
+- result: `blocked`, endurance exit code `1`
+- limitation: both entrypoint and composer require a valid session from this environment
 
 ## Wildberries
 
-- query: `наушники`
-- discovered: 0; endurance: 1 request, network timeout (в предыдущем smoke также был HTTP 403)
-- blocked: подтверждён предыдущим live smoke ответом HTTP 403
-- cookies: нужны валидные browser cookies/session
-- limiting factor: защита endpoint без cookies
+- tested_at: `2026-09-24`
+- query/category: `наушники`
+- cookies/session: not configured
+- target: `100`
+- discovered: `0`
+- details: `0/0`
+- INN: `0/0`
+- address: `0/0`
+- pages: `0`
+- requests: `1`
+- 403: `0` in this run; previous smoke returned `403`
+- 429: `0`
+- duration: `5.01s`
+- result: `temporary_error` (network timeout), endurance exit code `1`
+- limitation: current endpoint/session is unavailable; previous live response confirmed blocking
 
 ## Yandex Market
 
-- query: `наушники`
-- discovered: 0; endurance: 1×HTTP 200, содержимое protection page без `productSnippet`
-- blocked: да, распознано по содержимому страницы
-- cookies: вероятно нужны для текущей сессии; detail endpoint отдельно деградирует в partial
-- limiting factor: protection page
+- tested_at: `2026-09-24`
+- query/category: `наушники`
+- cookies/session: not configured
+- target: `100`
+- discovered: `0`
+- details: `0/0`
+- INN: `0/0`
+- address: `0/0`
+- pages: `0`
+- requests: `1`
+- 403: `0`
+- 429: `0`
+- duration: `0.76s`
+- result: `blocked` — HTTP 200 protection page without `productSnippet`, endurance exit code `1`
+- limitation: valid browser session/cookies required by current response
 
-Unit/fixture tests проходили; production-scale live target не заявляется без фактического
-успешного запуска.
+Targets 1,000/5,000/10,000 were not attempted because the required 100-seller
+stage did not succeed. No successful live crawl is claimed.

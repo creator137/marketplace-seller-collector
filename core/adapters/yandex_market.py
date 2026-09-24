@@ -41,6 +41,7 @@ class YandexMarketAdapter(MarketplaceAdapter):
 
     def __init__(self):
         self.last_page = 0
+        self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.YANDEX_MARKET_COOKIES),
             referer=BASE,
@@ -51,22 +52,21 @@ class YandexMarketAdapter(MarketplaceAdapter):
     def get_categories(self):
         return []
 
-    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
-        limit = max_sellers if max_sellers is not None else limit
-        params = {"text": category.external_id, "page": "1"}
+    def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
+        page = max(1, int(start_cursor or start_page or 1))
+        params = {"text": category.external_id, "page": str(page)}
         if category.external_id.isdigit():
-            params = {"hid": category.external_id, "page": "1"}
-        found = {}
+            params = {"hid": category.external_id, "page": str(page)}
+        found = set()
         seen_items = set()
-        page = 1
+        total_found = 0
         while True:
             self.last_page = page
             params["page"] = str(page)
             try:
                 resp = self.client.get(f"{BASE}/search", params=params)
                 if resp.status_code != 200:
-                    log.warning("YM search HTTP %s", resp.status_code)
-                    break
+                    raise CollectionParseError(f"Yandex Market unexpected search HTTP {resp.status_code}")
                 snippets = parse_snippets(resp.text)
             except HttpError as exc:
                 if exc.blocked:
@@ -79,10 +79,14 @@ class YandexMarketAdapter(MarketplaceAdapter):
                 raise CollectionBlocked("Yandex Market returned a protection page")
             if not snippets:
                 break
+            self.metrics["pages"] += 1
+            self.metrics["products"] += len(snippets)
             page_new = 0
+            page_sellers = {}
             for sn in snippets:
                 item_key = str(sn.get("marketSku") or sn.get("sku") or sn.get("title") or "")
                 if item_key and item_key in seen_items:
+                    self.metrics["duplicates"] += 1
                     continue
                 if item_key:
                     seen_items.add(item_key)
@@ -91,11 +95,11 @@ class YandexMarketAdapter(MarketplaceAdapter):
                 if not sid:
                     continue
                 sid = str(sid)
-                if sid not in found:
+                if sid not in found and sid not in page_sellers:
                     rating = ""
                     if isinstance(sn.get("rating"), dict):
                         rating = str(sn["rating"].get("rating", "") or "")
-                    found[sid] = SellerData(
+                    page_sellers[sid] = SellerData(
                         marketplace=self.code,
                         external_seller_id=sid,
                         seller_url=f"{BASE}/seller/{sid}/",
@@ -104,15 +108,26 @@ class YandexMarketAdapter(MarketplaceAdapter):
                         category_refs=[category.external_id] if category else [],
                         raw={"marketSku": sn.get("marketSku"), "title": sn.get("title")},
                     )
-                if limit and len(found) >= limit:
-                    return list(found.values())
+                elif sid in page_sellers:
+                    self.metrics["duplicates"] += 1
             if page > 1 and page_new == 0:
                 break
+            checkpoint = {"page": page + 1, "cursor": page + 1, "next_cursor": page + 1, "finished": False}
+            for sid, seller in page_sellers.items():
+                if max_sellers and total_found >= max_sellers:
+                    break
+                found.add(sid)
+                total_found += 1
+                self.metrics["seller_refs"] += 1
+                yield seller, checkpoint
+            if max_sellers and total_found >= max_sellers:
+                break
+            yield None, checkpoint
             page += 1
             if page > 10000:
                 log.warning("Yandex Market pagination safety stop at page %s", page)
                 break
-        return list(found.values())
+        yield None, {"page": page, "cursor": None, "next_cursor": None, "finished": True}
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         try:

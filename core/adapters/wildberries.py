@@ -35,6 +35,7 @@ class WildberriesAdapter(MarketplaceAdapter):
 
     def __init__(self):
         self.last_page = 0
+        self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
             cookies=HttpClient.parse_cookies(settings.WB_COOKIES),
             headers=BASE_HEADERS,
@@ -68,19 +69,19 @@ class WildberriesAdapter(MarketplaceAdapter):
                 })
         return out
 
-    def discover_sellers(self, category, city=None, limit=0, max_sellers=None):
-        """Search category -> products -> supplierId/supplier/supplierRating."""
-        limit = max_sellers if max_sellers is not None else limit
+    def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
+        """Stream WB product pages and persist the next page checkpoint."""
         shard, _, query = (category.external_id or "").partition("|")
         query = query or category.external_id
         params = {
             "appType": "1", "curr": "rub", "dest": self._dest(city),
-            "query": query, "resultset": "catalog", "page": "1",
+            "query": query, "resultset": "catalog", "page": str(start_page or 1),
             "sort": "popular", "spp": "30", "suppressSpellcheck": "false",
         }
-        found = {}
+        found = set()
         seen_products = set()
-        page = 1
+        page = max(1, int(start_cursor or start_page or 1))
+        total_found = 0
         while True:
             params["page"] = str(page)
             self.last_page = page
@@ -88,6 +89,9 @@ class WildberriesAdapter(MarketplaceAdapter):
                 resp = self.client.get(SEARCH_URL, params=params)
                 data = resp.json()
             except ValueError as exc:
+                body = str(getattr(resp, "text", ""))
+                if re.search(r"captcha|cloudflare|robot|проверка", body, re.I):
+                    raise CollectionBlocked(f"WB returned a protection page on page {page}") from exc
                 raise CollectionParseError(f"WB returned non-JSON on page {page}") from exc
             except Exception as exc:
                 if isinstance(exc, (CollectionBlocked, CollectionParseError)):
@@ -97,10 +101,14 @@ class WildberriesAdapter(MarketplaceAdapter):
             products = (data.get("data") or data).get("products") or []
             if not products:
                 break
+            self.metrics["pages"] += 1
+            self.metrics["products"] += len(products)
             page_new = 0
+            page_sellers = {}
             for p in products:
                 product_key = str(p.get("id") or p.get("nmId") or "")
                 if product_key and product_key in seen_products:
+                    self.metrics["duplicates"] += 1
                     continue
                 if product_key:
                     seen_products.add(product_key)
@@ -109,8 +117,8 @@ class WildberriesAdapter(MarketplaceAdapter):
                 if sid is None:
                     continue
                 sid = str(sid)
-                if sid not in found:
-                    found[sid] = SellerData(
+                if sid not in found and sid not in page_sellers:
+                    page_sellers[sid] = SellerData(
                         marketplace=self.code,
                         external_seller_id=sid,
                         seller_url=f"https://www.wildberries.ru/seller/{sid}",
@@ -119,15 +127,26 @@ class WildberriesAdapter(MarketplaceAdapter):
                         category_refs=[category.external_id] if category else [],
                         raw={"product": p.get("id"), "brand": p.get("brand")},
                     )
-                if limit and len(found) >= limit:
-                    return list(found.values())
+                elif sid not in page_sellers:
+                    self.metrics["duplicates"] += 1
             if page > 1 and page_new == 0:
                 break
+            checkpoint = {"page": page + 1, "cursor": page + 1, "next_cursor": page + 1, "finished": False}
+            for sid, seller in page_sellers.items():
+                if max_sellers and total_found >= max_sellers:
+                    break
+                found.add(sid)
+                total_found += 1
+                self.metrics["seller_refs"] += 1
+                yield seller, checkpoint
+            if max_sellers and total_found >= max_sellers:
+                break
+            yield None, {**checkpoint, "finished": False}
             page += 1
             if page > 10000:
                 log.warning("WB pagination safety stop at page %s", page)
                 break
-        return list(found.values())
+        yield None, {"page": page, "cursor": None, "next_cursor": None, "finished": True}
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         """Supplier card: name, INN/OGRN, address, site if returned."""

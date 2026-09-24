@@ -56,7 +56,21 @@ class MarketplaceAdapter:
         raise NotImplementedError
 
     def discover_sellers(self, category, city=None, limit=0, max_sellers=None) -> Iterable[SellerData]:
-        """Find sellers for a category (optionally city-scoped)."""
+        """Compatibility list API used by smoke/tests; jobs use iter_sellers."""
+        max_sellers = max_sellers if max_sellers is not None else limit
+        return [
+            data for data, _checkpoint in self.iter_sellers(
+                category, city=city, max_sellers=max_sellers,
+            ) if data is not None
+        ]
+
+    def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
+        """Yield ``(SellerData | None, checkpoint)`` incrementally.
+
+        A ``None`` data item is a page boundary.  The checkpoint is emitted
+        only after that page was fully parsed, so it is safe to persist and
+        resume from it.
+        """
         raise NotImplementedError
 
     def fetch_seller(self, ref: str) -> Optional[SellerData]:

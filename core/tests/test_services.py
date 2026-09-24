@@ -122,4 +122,5 @@ class DaDataMergeTest(TestCase):
         self.assertEqual(fields["name"], "ООО Ромашка")
         self.assertEqual(fields["mobile_phones"], ["+7 (917) 555-66-77"])
         self.assertEqual(fields["emails"], ["info@romashka.ru"])
+        self.assertEqual(fields["website"], "")
         self.assertTrue(fields["legal_address"].startswith("г. Уфа"))
