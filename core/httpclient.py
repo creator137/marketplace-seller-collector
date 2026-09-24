@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 
 from django.conf import settings
 from curl_cffi import requests as cffi_requests
@@ -76,6 +77,30 @@ class HttpClient:
                 k, _, v = pair.strip().partition("=")
                 out[k.strip()] = v.strip()
         return out
+
+    @staticmethod
+    def marketplace_cookies(marketplace: str, raw: str = "") -> dict:
+        """Merge configured Cookie header with an optional browser session.
+
+        The browser bootstrap writes Playwright's cookie objects to
+        ``runtime/sessions/<marketplace>.json``.  Runtime cookies override an
+        env value with the same name, which makes refreshing a session
+        deterministic without changing adapter code.
+        """
+        cookies = HttpClient.parse_cookies(raw)
+        path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            items = payload.get("cookies", []) if isinstance(payload, dict) else payload
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and item.get("name") and item.get("value") is not None:
+                        cookies[str(item["name"])] = str(item["value"])
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            # A missing/stale runtime session is diagnosed by the marketplace
+            # response; it must not prevent the adapter from starting.
+            pass
+        return cookies
 
     def get(self, url, params=None, headers=None, timeout=None):
         return self.request("GET", url, params=params, headers=headers, timeout=timeout)

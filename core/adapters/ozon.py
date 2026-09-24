@@ -95,7 +95,7 @@ class OzonAdapter(MarketplaceAdapter):
         self.last_page = 0
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
-            cookies=HttpClient.parse_cookies(settings.OZON_COOKIES),
+            cookies=HttpClient.marketplace_cookies("ozon", settings.OZON_COOKIES),
             referer=BASE,
             headers=API_HEADERS,
         )

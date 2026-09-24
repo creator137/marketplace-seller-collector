@@ -72,6 +72,7 @@ class CollectionPipelineTest(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, CollectionJob.Status.PAUSED)
         self.assertEqual(job.source_status, "blocked")
+        self.assertEqual(job.error_message, "Требуется обновить сессию маркетплейса")
         self.assertEqual(job.job_sellers.count(), 1)
         self.assertEqual(job.checkpoint["discovery"][f"ozon:{job.categories.first().id}:0"]["cursor"], "/search?page=2")
         adapter.mode = "normal"

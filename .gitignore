@@ -8,3 +8,4 @@ media/
 .venv/
 venv/
 *.xlsx
+runtime/sessions/*.json

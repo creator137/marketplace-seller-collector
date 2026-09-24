@@ -1,4 +1,6 @@
 """Operational readiness check without marketplace traffic by default."""
+from pathlib import Path
+
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
@@ -40,7 +42,10 @@ class Command(BaseCommand):
             "yandex_market": settings.YANDEX_MARKET_COOKIES,
         }
         for code, value in cookie_settings.items():
-            self.stdout.write(f"{code} cookies: {'configured' if value else 'missing'}")
+            runtime = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{code}.json"
+            configured = bool(value) or runtime.exists()
+            source = "env/runtime" if value and runtime.exists() else ("env" if value else "runtime" if runtime.exists() else "missing")
+            self.stdout.write(f"{code} cookies: {'configured' if configured else 'missing'} ({source})")
         self.stdout.write(f"categories: {Category.objects.filter(is_active=True).count()}")
         self.stdout.write(f"cities: {City.objects.filter(is_active=True).count()}")
 

@@ -37,7 +37,7 @@ class WildberriesAdapter(MarketplaceAdapter):
         self.last_page = 0
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
-            cookies=HttpClient.parse_cookies(settings.WB_COOKIES),
+            cookies=HttpClient.marketplace_cookies("wildberries", settings.WB_COOKIES),
             headers=BASE_HEADERS,
         )
 

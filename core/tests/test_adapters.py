@@ -1,12 +1,16 @@
 """Adapter parsing tests from saved fixtures (no live network)."""
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from core.adapters.ozon import OzonAdapter, widget_state
 from core.adapters.yandex_market import parse_snippets
 from core.models import Category, Marketplace
 from core.services import upsert_seller
+from core.httpclient import HttpClient
 
 OZON_CATEGORY_RESPONSE = {
     "nextPage": "/category/naushniki-15692/?page=2",
@@ -59,6 +63,17 @@ WB_SEARCH_RESPONSE = {
 
 
 class OzonParsingTest(TestCase):
+    def test_runtime_browser_session_overrides_env_cookie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session_dir = Path(tmp) / "runtime" / "sessions"
+            session_dir.mkdir(parents=True)
+            (session_dir / "ozon.json").write_text(json.dumps({
+                "cookies": [{"name": "session", "value": "browser"}, {"name": "fresh", "value": "1"}],
+            }), encoding="utf-8")
+            with override_settings(BASE_DIR=Path(tmp)):
+                cookies = HttpClient.marketplace_cookies("ozon", "session=env; old=value")
+        self.assertEqual(cookies, {"session": "browser", "old": "value", "fresh": "1"})
+
     def test_widget_state(self):
         state = widget_state(OZON_CATEGORY_RESPONSE, "sellerList")
         self.assertEqual(len(state["items"]), 3)

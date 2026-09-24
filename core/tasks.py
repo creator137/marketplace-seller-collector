@@ -30,7 +30,7 @@ def _classify_error(exc):
 
 
 def _pause(job, exc, status):
-    message = str(exc)[:2000]
+    message = "Требуется обновить сессию маркетплейса" if status == "blocked" else str(exc)[:2000]
     job.status = CollectionJob.Status.PAUSED if status != "failed" else CollectionJob.Status.FAILED
     job.source_status = status
     job.last_error = message

@@ -43,7 +43,7 @@ class YandexMarketAdapter(MarketplaceAdapter):
         self.last_page = 0
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         self.client = HttpClient(
-            cookies=HttpClient.parse_cookies(settings.YANDEX_MARKET_COOKIES),
+            cookies=HttpClient.marketplace_cookies("yandex_market", settings.YANDEX_MARKET_COOKIES),
             referer=BASE,
             headers=HEADERS,
         )

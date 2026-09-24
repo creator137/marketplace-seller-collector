@@ -67,13 +67,24 @@ python manage.py project_health --live
 3. выберите marketplace, города и категории;
 4. запустите сбор;
 5. при блокировке job получает `paused`, причина и checkpoint видны в UI;
-6. обновите cookies сессии в `.env`, перезапустите worker и нажмите `Продолжить сбор`;
+6. если источник заблокирован, получите пользовательскую сессию командой bootstrap ниже и нажмите `Продолжить сбор`;
 7. экспортируйте XLSX конкретного job.
 
-В live-проверке 2026-09-24 все три площадки потребовали рабочую browser-сессию:
-Ozon и WB вернули 403/сетевую ошибку, Yandex Market отдал protection page с HTTP 200.
-Автоматический Playwright bootstrap не добавлен: текущая среда не показала рабочий
-browser flow без пользовательской сессии. Cookies задаются в `.env` (строка Cookie-заголовка или JSON-словарь):
+Bootstrap открывает обычный пользовательский Chromium один раз. Основной crawl
+после этого всегда выполняется через curl_cffi, не через браузер:
+
+```bash
+python manage.py bootstrap_sessions --marketplace ozon
+python manage.py bootstrap_sessions --marketplace wildberries
+python manage.py bootstrap_sessions --marketplace yandex_market
+```
+
+В открывшемся окне пройдите captcha/verification вручную и нажмите Enter в
+терминале. Cookies сохраняются в `runtime/sessions/*.json` (этот каталог не
+коммитится), автоматически подхватываются соответствующим адаптером. В Docker
+для ручного окна запускайте bootstrap в окружении с доступным desktop display;
+`--headless` предназначен только для сессий без ручной проверки. Альтернативно
+можно задать Cookies в `.env` (строка Cookie-заголовка или JSON-словарь):
 
 ```env
 OZON_COOKIES=
