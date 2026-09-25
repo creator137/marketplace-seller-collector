@@ -179,10 +179,20 @@ def _process_details(job):
     concurrency = max(1, settings.COLLECT_CONCURRENCY)
     blocked_exc = None
 
-    def fetch(ref):
+    def fetch(link):
         if not hasattr(local, "adapter"):
             local.adapter = get_adapter(job.marketplace)
-        return local.adapter.fetch_seller(ref)
+        # Ozon detail pages require the slug URL that was present in the
+        # discovery response; a bare numeric id may render an empty page.
+        # Keep the numeric id as fallback for adapters that only accept ids.
+        fallback_ref = link.external_seller_id
+        seller_ref = (getattr(link, "seller", None) and getattr(link.seller, "seller_url", "")) or fallback_ref
+        try:
+            return local.adapter.fetch_seller(seller_ref)
+        except Exception:
+            if seller_ref != fallback_ref:
+                return local.adapter.fetch_seller(fallback_ref)
+            raise
 
     links = list(links_qs.iterator(chunk_size=max(50, batch_size)))
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -190,7 +200,7 @@ def _process_details(job):
             chunk = links[offset:offset + batch_size]
             ids = [link.id for link in chunk]
             CollectionJobSeller.objects.filter(id__in=ids).update(detail_status="processing", detail_error="")
-            futures = {link.id: pool.submit(fetch, link.external_seller_id) for link in chunk}
+            futures = {link.id: pool.submit(fetch, link) for link in chunk}
             for link in chunk:
                 try:
                     detail = futures[link.id].result()

@@ -8,6 +8,8 @@ services:
       DATABASE_URL: postgresql://seller:seller@postgres:5432/seller
       REDIS_URL: redis://redis:6379/0
       RQ_ASYNC: "1"
+    volumes:
+      - ./runtime/sessions:/app/runtime/sessions
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,6 +27,8 @@ services:
       DATABASE_URL: postgresql://seller:seller@postgres:5432/seller
       REDIS_URL: redis://redis:6379/0
       RQ_ASYNC: "1"
+    volumes:
+      - ./runtime/sessions:/app/runtime/sessions
     depends_on:
       postgres:
         condition: service_healthy

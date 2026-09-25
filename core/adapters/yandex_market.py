@@ -24,6 +24,10 @@ HEADERS = {
 
 ZONE_DATA_RE = re.compile(r'data-zone-name="productSnippet"[^>]*data-zone-data="([^"]+)"')
 
+# Specific challenge markers only. The generic word "captcha" also appears in
+# the JS boilerplate of healthy pages and must not be treated as a block.
+PROTECTION_MARKERS = ("masscaptcha", "smartcaptcha", "robot verification", "доступ ограничен", "проверка, что вы не робот")
+
 
 def parse_snippets(html_text: str) -> list[dict]:
     """Extract productSnippet zone-data dicts from a YM page."""
@@ -75,7 +79,7 @@ class YandexMarketAdapter(MarketplaceAdapter):
             except Exception as exc:
                 log.warning("YM search failed: %s", exc)
                 raise
-            if not snippets and re.search(r"captcha|робот|доступ ограничен|проверка", resp.text, re.I):
+            if not snippets and any(marker in resp.text.lower() for marker in PROTECTION_MARKERS):
                 raise CollectionBlocked("Yandex Market returned a protection page")
             if not snippets:
                 break

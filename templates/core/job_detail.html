@@ -16,9 +16,19 @@
       {% elif job.status == 'running' %}bg-blue
       {% else %}bg-secondary{% endif %} mb-2">{{ job.get_status_display }}</span>
     <div class="text-muted small mb-2">Источник: {{ job.source_status }}{% if job.retry_after %}; повторить после {{ job.retry_after|date:"d.m.Y H:i" }}{% endif %}</div>
-    <div class="progress mb-2" style="height:6px">
-      <div class="progress-bar bg-primary" style="width: {% widthratio job.processed job.total|default:1 100 %}%"></div>
+    <div class="progress mb-2" style="height:8px" role="progressbar" aria-label="Прогресс сбора"
+         aria-valuenow="{{ job.processed }}"{% if job.total %} aria-valuemin="0" aria-valuemax="{{ job.total }}"{% endif %}>
+      {% if job.total %}
+        <div class="progress-bar bg-primary" style="width: {% widthratio job.processed job.total 100 %}%"></div>
+      {% elif job.status == 'queued' or job.status == 'running' %}
+        <div class="progress-bar progress-bar-indeterminate bg-primary" style="width: 100%"></div>
+      {% else %}
+        <div class="progress-bar bg-secondary" style="width: 100%"></div>
+      {% endif %}
     </div>
+    {% if job.status == 'queued' or job.status == 'running' %}
+      <div class="text-muted small mb-3">Сбор выполняется. Страница обновляется автоматически. Обработано: {{ job.processed }}; найдено: {{ job.found }}.</div>
+    {% endif %}
     <div class="datagrid">
       <div class="datagrid-item"><div class="datagrid-title">Обработано</div><div class="datagrid-content">{{ job.processed }}{% if job.total %} / {{ job.total }}{% endif %}</div></div>
       <div class="datagrid-item"><div class="datagrid-title">Найдено</div><div class="datagrid-content">{{ job.found }}</div></div>

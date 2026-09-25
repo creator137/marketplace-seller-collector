@@ -8,6 +8,80 @@ class Marketplace(models.TextChoices):
     YM = "yandex_market", "Яндекс.Маркет"
 
 
+class MarketplaceSession(models.Model):
+    """Browser session cookies for one marketplace, editable in Django Admin.
+
+    On save the cookies are written to ``runtime/sessions/<marketplace>.json`` —
+    the same file ``HttpClient.marketplace_cookies()`` reads at adapter start,
+    so a refreshed session applies to new jobs without a restart.
+    """
+
+    marketplace = models.CharField(
+        "Маркетплейс", max_length=32, choices=Marketplace.choices, unique=True,
+    )
+    cookies = models.TextField(
+        "Cookies",
+        help_text="Строка Cookie-заголовка (name=value; name2=value2) или JSON-словарь",
+    )
+    source = models.CharField("Источник", max_length=16, default="admin")
+    note = models.CharField("Заметка", max_length=255, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Сессия маркетплейса"
+        verbose_name_plural = "Сессии маркетплейсов"
+
+    def __str__(self):
+        return f"Сессия {self.get_marketplace_display()} (обновлена {self.updated_at:%d.%m.%Y %H:%M})"
+
+    def parsed_cookies(self) -> dict:
+        from core.httpclient import HttpClient
+
+        return HttpClient.parse_cookies(self.cookies)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.write_session_file()
+
+    def write_session_file(self):
+        import json
+        from pathlib import Path
+
+        from django.conf import settings
+
+        session_dir = Path(settings.BASE_DIR) / "runtime" / "sessions"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "marketplace": self.marketplace,
+            "saved_at": timezone.now().isoformat(),
+            "source": self.source,
+            "cookies": [
+                {"name": name, "value": value}
+                for name, value in self.parsed_cookies().items()
+            ],
+        }
+        (session_dir / f"{self.marketplace}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+
+    @staticmethod
+    def file_status(marketplace: str) -> str:
+        """Human-readable state of the session file a worker would read."""
+        import json
+        from pathlib import Path
+
+        from django.conf import settings
+
+        path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            return "нет файла сессии"
+        items = payload.get("cookies", []) if isinstance(payload, dict) else payload
+        saved = str(payload.get("saved_at", "?"))[:19] if isinstance(payload, dict) else "?"
+        return f"{len(items)} cookies, сохранено {saved}"
+
+
 class City(models.Model):
     name = models.CharField("Название", max_length=100, unique=True)
     normalized = models.CharField("Нормализованное название", max_length=100, unique=True, editable=False)

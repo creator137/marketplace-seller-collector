@@ -40,14 +40,15 @@ class HttpError(Exception):
 class HttpClient:
     """Sync session wrapper with browser-like headers, cookies and retries."""
 
-    def __init__(self, cookies: dict | None = None, referer: str = "", headers: dict | None = None):
+    def __init__(self, cookies: dict | None = None, referer: str = "", headers: dict | None = None,
+                 impersonate: str = IMPERSONATE):
         proxies = {
             key: value for key, value in {
                 "http": getattr(settings, "HTTP_PROXY", ""),
                 "https": getattr(settings, "HTTPS_PROXY", ""),
             }.items() if value
         }
-        self.session = cffi_requests.Session(impersonate=IMPERSONATE, proxies=proxies or None)
+        self.session = cffi_requests.Session(impersonate=impersonate, proxies=proxies or None)
         self.stats = {"requests": 0, "2xx": 0, "403": 0, "429": 0, "5xx": 0, "other": 0}
         if cookies:
             self.session.cookies.update(cookies)

@@ -35,12 +35,12 @@ OZON_SEARCH_RESPONSE = {
 OZON_PRODUCT_RESPONSES = {
     "/product/naushniki-1667800384": {
         "widgetStates": {
-            "webCurrentSeller-1": """{"sellerCell":{"centerBlock":{"title":{"text":"AudioShop"}},"common":{"action":{"link":"ozon://seller/777?miniapp"}}},"rating":{"title":{"text":"4.9"}}}""",
+            "webCurrentSeller-1": """{"sellerCell":{"centerBlock":{"title":{"text":"AudioShop"}},"common":{"action":{"link":"https://www.ozon.ru/seller/audioshop-777/"}}},"rating":{"title":{"text":"4.9"}}}""",
         }
     },
     "/product/naushniki-1667800385": {
         "widgetStates": {
-            "webCurrentSeller-2": """{"sellerCell":{"centerBlock":{"title":{"text":"VideoStore"}},"common":{"action":{"link":"/seller/888/"}}},"rating":{"title":{"text":"4.7"}}}""",
+            "webCurrentSeller-2": """{"sellerCell":{"centerBlock":{"title":{"text":"VideoStore"}},"common":{"action":{"link":"ozon://seller/888?miniapp"}}},"rating":{"title":{"text":"4.7"}}}""",
         }
     },
 }
@@ -63,6 +63,15 @@ WB_SEARCH_RESPONSE = {
 
 
 class OzonParsingTest(TestCase):
+    def test_information_registration_is_not_inn(self):
+        from core.adapters.ozon import seller_requisites
+
+        html = '<span>ИП Жилич Максим Александрович<br>324344300091317</span>'
+        self.assertEqual(seller_requisites(html), {'ogrn': '324344300091317'})
+        self.assertEqual(seller_requisites({'inn': '324344300091317'}), {})
+        self.assertEqual(seller_requisites('ИНН: 7801234567'), {'inn': '7801234567'})
+        self.assertEqual(seller_requisites({'id': '123456789012'}), {})
+
     def test_runtime_browser_session_overrides_env_cookie(self):
         with tempfile.TemporaryDirectory() as tmp:
             session_dir = Path(tmp) / "runtime" / "sessions"

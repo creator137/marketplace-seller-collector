@@ -5,13 +5,13 @@ Live-verified path (2026-09, requires OZON_COOKIES):
   -> product page -> webCurrentSeller widget (sellerId, name, rating)
   -> seller page -> sellerTransparency widget (full title)
 
-Ozon no longer publishes INN/legal address in seller widgets (checked live);
-those fields stay empty unless another source provides them.
+Seller information may contain requisites. Registration numbers are not INNs.
 """
 import json
 import logging
 import re
 import time
+from html import unescape
 from urllib.parse import quote
 
 from django.conf import settings
@@ -25,17 +25,22 @@ BASE = "https://www.ozon.ru"
 API = f"{BASE}/api/entrypoint-api.bx/page/json/v2"
 COMPOSER_API = "https://api.ozon.ru/composer-api.bx/page/json/v2"
 
+# Live-verified 2026-09-25: Ozon accepts requests only when the TLS
+# impersonation version and header set are consistent (chrome131 + desktop
+# macOS / web_client). Mixed mobile-UA + old TLS variants get 403.
 API_HEADERS = {
     "accept": "application/json",
     "content-type": "application/json",
-    "x-o3-app-name": "mweb_client",
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "x-o3-app-name": "web_client",
     "user-agent": (
-        "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     ),
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
 }
+OZON_IMPERSONATE = "chrome131"
 COMPOSER_HEADERS = {
     "accept": "application/json",
     "content-type": "application/json",
@@ -45,6 +50,8 @@ COMPOSER_HEADERS = {
 
 SELLER_URL_RE = re.compile(r"/seller/(\d+)")
 SELLER_ID_RE = re.compile(r"seller[\"/]+(\d+)")
+SELLER_SLUG_RE = re.compile(r"/seller/([^/?#\"]+)")
+SLUG_ID_RE = re.compile(r"-(\d+)$")
 DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
 
 
@@ -76,16 +83,71 @@ def _tile_products(data: dict) -> list[str]:
     return links
 
 
-def _seller_from_product_state(state: dict) -> tuple[str, str, str]:
-    """(seller_id, name, rating) from a webCurrentSeller widget state."""
+def _next_page_path(data: dict) -> str | None:
+    """Next-page path from the top-level field or the infinite paginator widget
+    (desktop search layout keeps its cursor in infiniteVirtualPaginator)."""
+    next_page = data.get("nextPage") or data.get("next_page")
+    if next_page:
+        return next_page
+    paginator = widget_state(data, "infiniteVirtualPaginator")
+    return (paginator or {}).get("nextPage") or None
+
+
+def _seller_from_product_state(state: dict) -> tuple[str, str, str, str]:
+    """(seller_id, name, rating) from a webCurrentSeller widget state.
+
+    Desktop layout links to /seller/<slug>-<id>/ (id sometimes absent from the
+    slug); mobile layout used ozon://seller/<id>. The slug itself is a valid
+    stable reference and is used as fallback id.
+    """
     cell = state.get("sellerCell") or {}
     name = ((cell.get("centerBlock") or {}).get("title") or {}).get("text") or ""
     rating = ((state.get("rating") or {}).get("title") or {}).get("text") or ""
-    # seller id: from the cell action link (ozon://seller/123 or /seller/123)
-    dump = json.dumps(state, ensure_ascii=False)
-    m = SELLER_ID_RE.search(dump)
-    sid = m.group(1) if m else ""
-    return sid, name, rating
+    link = (((cell.get("common") or {}).get("action") or {}).get("link")) or ""
+    sid = ""
+    slug_m = SELLER_SLUG_RE.search(link)
+    if slug_m:
+        slug = slug_m.group(1)
+        id_m = SLUG_ID_RE.search(slug)
+        sid = id_m.group(1) if id_m else slug
+    if not sid:
+        dump_m = SELLER_ID_RE.search(json.dumps(state, ensure_ascii=False))
+        sid = dump_m.group(1) if dump_m else ""
+    return sid, name, rating, link
+
+
+def seller_requisites(payload):
+    """Extract requisites only from seller information, not product payloads."""
+    found = {}
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            field = str(key).lower()
+            if field in ("inn", "ogrn", "ogrnip"):
+                number = str(value).strip()
+                lengths = (10, 12) if field == "inn" else (13, 15)
+                if number.isascii() and number.isdigit() and len(number) in lengths:
+                    found.setdefault("inn" if field == "inn" else "ogrn", number)
+            if field in ("action", "url", "link", "trackinginfo"):
+                continue
+            for name, number in seller_requisites(value).items():
+                found.setdefault(name, number)
+    elif isinstance(payload, list):
+        for item in payload:
+            for name, number in seller_requisites(item).items():
+                found.setdefault(name, number)
+    elif isinstance(payload, str):
+        text = unescape(re.sub(r"<[^>]+>", " ", payload))
+        for field, label, lengths in (("inn", "ИНН|INN", (12, 10)),
+                                      ("ogrn", "ОГРНИП|ОГРН|OGRNIP|OGRN", (15, 13))):
+            pattern = r"(?<![а-яa-z])(?:" + label + r")[ :№-]*([0-9]{" + str(lengths[0]) + r"}|[0-9]{" + str(lengths[1]) + r"})(?![0-9])"
+            match = re.search(pattern, text, re.I)
+            if match:
+                found[field] = match.group(1)
+        if "ogrn" not in found and re.search(r"(?:^| )(?:ИП|ООО|АО|ПАО) +", text):
+            match = re.search(r"(?<![0-9])([0-9]{15}|[0-9]{13})(?![0-9])", text)
+            if match:
+                found["ogrn"] = match.group(1)
+    return found
 
 
 class OzonAdapter(MarketplaceAdapter):
@@ -98,6 +160,7 @@ class OzonAdapter(MarketplaceAdapter):
             cookies=HttpClient.marketplace_cookies("ozon", settings.OZON_COOKIES),
             referer=BASE,
             headers=API_HEADERS,
+            impersonate=OZON_IMPERSONATE,
         )
 
     def _api_get(self, page_path: str) -> dict | None:
@@ -168,13 +231,17 @@ class OzonAdapter(MarketplaceAdapter):
 
             state = widget_state(data, "sellerList")
             for item in (state or {}).get("items") or []:
-                m = SELLER_URL_RE.search(item.get("deeplink") or "")
+                deeplink = item.get("deeplink") or ""
+                m = SELLER_URL_RE.search(deeplink)
                 if not m or m.group(1) in seen_sellers:
                     continue
+                seller_path = deeplink.split("?", 1)[0]
+                if seller_path.startswith("ozon://"):
+                    seller_path = f"/seller/{m.group(1)}/"
                 page_found[m.group(1)] = SellerData(
                     marketplace=self.code,
                     external_seller_id=m.group(1),
-                    seller_url=f"{BASE}/seller/{m.group(1)}/",
+                    seller_url=seller_path if seller_path.startswith("http") else f"{BASE}{seller_path}",
                     name=item.get("title") or "",
                     rating=str(item.get("rating", "") or ""),
                     category_refs=[category.external_id] if category else [],
@@ -190,13 +257,13 @@ class OzonAdapter(MarketplaceAdapter):
                 pstate = widget_state(pdata, "webCurrentSeller")
                 if not pstate:
                     continue
-                sid, name, rating = _seller_from_product_state(pstate)
+                sid, name, rating, seller_link = _seller_from_product_state(pstate)
                 if not sid or sid in seen_sellers or sid in page_found:
                     continue
                 page_found[sid] = SellerData(
                     marketplace=self.code,
                     external_seller_id=sid,
-                    seller_url=f"{BASE}/seller/{sid}/",
+                    seller_url=(seller_link if seller_link.startswith("http") else f"{BASE}{seller_link}") if seller_link else f"{BASE}/seller/{sid}/",
                     name=name,
                     rating=rating,
                     category_refs=[category.external_id] if category else [],
@@ -205,7 +272,7 @@ class OzonAdapter(MarketplaceAdapter):
                 if settings.HTTP_RATE_DELAY:
                     time.sleep(settings.HTTP_RATE_DELAY)
 
-            next_page = data.get("nextPage") or data.get("next_page")
+            next_page = _next_page_path(data)
             checkpoint = {
                 "page": page_number + 1,
                 "cursor": next_page or None,
@@ -229,7 +296,18 @@ class OzonAdapter(MarketplaceAdapter):
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         """Seller page -> sellerTransparency widget (full title) / legacy profile."""
-        data = self._api_get_stable(f"/seller/{ref}/")
+        # Discovery keeps the canonical slug URL (e.g. ``/seller/shop-123/``).
+        # Preserve it here; Ozon frequently returns an empty shell for the
+        # numeric-only variant.
+        ref_text = str(ref or "")
+        if ref_text.startswith(("http://", "https://")):
+            from urllib.parse import urlparse
+            page_path = urlparse(ref_text).path or "/"
+        elif ref_text.startswith("/"):
+            page_path = ref_text
+        else:
+            page_path = f"/seller/{ref_text}/"
+        data = self._api_get_stable(page_path)
         if not data:
             return None
         name = ""
@@ -254,10 +332,10 @@ class OzonAdapter(MarketplaceAdapter):
         return SellerData(
             marketplace=self.code,
             external_seller_id=str(ref),
-            seller_url=f"{BASE}/seller/{ref}/",
+            seller_url=f"{BASE}{page_path}" if page_path.startswith("/") else f"{BASE}/seller/{ref_text}/",
             name=name,
-            inn=str(info.get("inn") or ""),
-            ogrn=str(info.get("ogrn") or ""),
+            inn=seller_requisites([info, st]).get("inn", ""),
+            ogrn=seller_requisites([info, st]).get("ogrn", ""),
             legal_address=info.get("legalAddress") or info.get("address") or "",
             registered_at=registered,
             raw=info,

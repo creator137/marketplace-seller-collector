@@ -6,6 +6,17 @@
   <title>{% block title %}Seller Collector{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta17/dist/css/tabler.min.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <style>
+    .progress-bar-indeterminate {
+      animation: collection-progress 1.4s ease-in-out infinite;
+      transform-origin: left center;
+    }
+    @keyframes collection-progress {
+      0% { transform: scaleX(.08); opacity: .55; }
+      50% { transform: scaleX(.65); opacity: 1; }
+      100% { transform: scaleX(.08); opacity: .55; }
+    }
+  </style>
 </head>
 <body class="theme-light">
 <div class="page">

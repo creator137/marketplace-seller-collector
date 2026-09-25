@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -20,6 +21,21 @@ def _rq_queue():
     return django_rq.get_queue("default")
 
 
+def _run_job_in_background(job_id):
+    """Run a job outside the request when Redis is unavailable.
+
+    The Docker deployment normally uses RQ. Keeping this fallback asynchronous
+    prevents a slow marketplace request from holding the browser request open.
+    """
+    thread = threading.Thread(
+        target=run_collection_job,
+        args=(job_id,),
+        name=f"collection-job-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
 @login_required
 def dashboard(request):
     context = {
@@ -38,9 +54,9 @@ def dashboard(request):
         try:
             _rq_queue().enqueue(run_collection_job, job.id)
         except Exception as exc:
-            # Redis недоступен (локальная разработка) — выполняем задачу синхронно.
-            log.warning("RQ enqueue failed (%s); running job %s synchronously", exc, job.id)
-            run_collection_job(job.id)
+            # Redis недоступен (локальная разработка) — не блокируем HTTP-запрос.
+            log.warning("RQ enqueue failed (%s); running job %s in background", exc, job.id)
+            _run_job_in_background(job.id)
         return redirect("job_detail", job_id=job.id)
     return render(request, "core/dashboard.html", context)
 
@@ -143,8 +159,9 @@ def resume_job(request, job_id):
     job.save(update_fields=["status"])
     try:
         _rq_queue().enqueue(run_collection_job, job.id)
-    except Exception:
-        run_collection_job(job.id)
+    except Exception as exc:
+        log.warning("RQ enqueue failed (%s); resuming job %s in background", exc, job.id)
+        _run_job_in_background(job.id)
     return redirect("job_detail", job_id=job.id)
 
 
