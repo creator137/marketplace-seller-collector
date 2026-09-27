@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Как это работает — Seller Collector{% endblock %}
+{% block content %}
+<div class="page-header text-center">
+  <div class="page-pretitle">Справка</div>
+  <h2 class="page-title">Как это работает</h2>
+  <div class="text-secondary mt-1">Кратко о сборе, сессиях, справочниках и обогащении данных.</div>
+</div>
+
+<div class="row row-cards justify-content-center">
+  <div class="col-lg-8">
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Сбор продавцов</h3>
+      </div>
+      <div class="card-body">
+        <ol class="mb-0 ps-3">
+          <li class="mb-2"><strong>Поиск.</strong> Адаптер находит продавцов в выбранных категориях (и городах — для Wildberries).</li>
+          <li class="mb-2"><strong>Детали.</strong> По найденным id подтягиваются название, рейтинг, ИНН, адрес и другие доступные поля с маркетплейса.</li>
+          <li class="mb-2"><strong>Обогащение.</strong> Если есть ИНН — контакты и реквизиты дополняются через DaData (без затирания данных маркетплейса).</li>
+          <li class="mb-2"><strong>Лимит по городу.</strong> В форме «Сколько собрать» — сколько продавцов <em>из выбранных городов</em> нужно набрать. Сбор продолжается, пока цель не достигнута (город определяется по юр. адресу).</li>
+          <li><strong>Результаты.</strong> Прогресс — в истории запусков; таблица и экспорт XLSX — в разделе «Продавцы» или на странице задачи.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Зачем нужна сессия маркетплейса</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-secondary">
+          Ozon, Wildberries и иногда Яндекс.Маркет блокируют запросы без «живой» пользовательской сессии
+          (cookies после прохождения проверки в браузере). Без сессии задача уходит в статус
+          <strong>Приостановлен</strong> — это не пустой успешный результат.
+        </p>
+        <p class="mb-2 fw-medium">Как сохранить сессию</p>
+        <ol class="ps-3 mb-3">
+          <li class="mb-2">На своём компьютере выполните команду bootstrap для нужного маркетплейса:</li>
+        </ol>
+        <pre class="bg-dark text-light p-3 rounded mb-3" style="font-size:.85rem">python manage.py bootstrap_sessions --marketplace ozon
+python manage.py bootstrap_sessions --marketplace wildberries
+python manage.py bootstrap_sessions --marketplace yandex_market</pre>
+        <ol class="ps-3 mb-3" start="2">
+          <li class="mb-2">В открывшемся окне браузера пройдите captcha/проверку вручную и нажмите Enter в терминале.</li>
+          <li class="mb-2">Cookies сохранятся в <code>runtime/sessions/</code> и автоматически подхватятся при следующем сборе.</li>
+          <li>Либо вставьте cookies вручную в справочнике <strong>Сессии маркетплейсов</strong> (раздел «Справочники») или в <code>.env</code> (<code>OZON_COOKIES</code>, <code>WB_COOKIES</code>, <code>YANDEX_MARKET_COOKIES</code>).</li>
+        </ol>
+        <p class="text-secondary mb-0">
+          Сессии со временем истекают. Если сбор снова остановился с блокировкой — обновите сессию и нажмите
+          <strong>Продолжить сбор</strong> на странице задачи (прогресс не теряется).
+        </p>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Для чего нужны справочники</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-secondary">
+          Раздел <a href="/admin/">Справочники</a> (Django Admin) — это настройка системы без правки кода.
+        </p>
+        <div class="datagrid">
+          <div class="datagrid-item">
+            <div class="datagrid-title">Города</div>
+            <div class="datagrid-content text-secondary">
+              Список городов в форме сбора и для определения города продавца по юр. адресу.
+              Для Wildberries можно указать <code>dest</code>-код доставки. Начальные: Уфа, Челябинск, Екатеринбург.
+            </div>
+          </div>
+          <div class="datagrid-item">
+            <div class="datagrid-title">Категории</div>
+            <div class="datagrid-content text-secondary">
+              Привязаны к маркетплейсу. В форме показываются только категории выбранной площадки.
+              <code>external_id</code> — поисковый запрос или путь категории на сайте. Без активных категорий сбор не запустить.
+            </div>
+          </div>
+          <div class="datagrid-item">
+            <div class="datagrid-title">Сессии маркетплейсов</div>
+            <div class="datagrid-content text-secondary">
+              Хранение и обновление cookies. После сохранения файл сессии сразу читают worker и адаптеры — перезапуск не нужен.
+            </div>
+          </div>
+          <div class="datagrid-item">
+            <div class="datagrid-title">Продавцы и задачи</div>
+            <div class="datagrid-content text-secondary">
+              Просмотр и поиск уже собранных записей, контактов и истории запусков (дублирует UI, удобно для правок).
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">DaData</h3>
+      </div>
+      <div class="card-body text-secondary">
+        <p>
+          Единственный внешний источник обогащения. Нужен токен <code>DADATA_TOKEN</code> в <code>.env</code>.
+          По ИНН дополняются название, юр. адрес, телефоны, email, сайт — если маркетплейс их не отдал.
+        </p>
+        <p class="mb-0">
+          Если DaData ничего не нашла — это нормально, задача не падает. Повторный запрос по тому же продавцу
+          обычно пропускается несколько недель (<code>DADATA_TTL_DAYS</code>).
+        </p>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Важно знать</h3>
+      </div>
+      <div class="card-body">
+        <ul class="mb-0 ps-3 text-secondary">
+          <li class="mb-2">Повторный запуск не создаёт дублей: продавец уникален по маркетплейсу + внешнему id.</li>
+          <li class="mb-2">Телефоны и email чаще приходят из DaData, а не с витрины маркетплейса.</li>
+          <li class="mb-2">Ссылка Telegram строится из мобильного номера технически — это не проверка аккаунта.</li>
+          <li class="mb-2">Яндекс.Маркет: список продавцов из поиска обычно доступен; страница продавца часто требует cookies.</li>
+          <li>Ozon/WB без актуальной сессии часто отдают 403 — обновите cookies и продолжите задачу.</li>
+        </ul>
+      </div>
+    </div>
+
+    <a class="btn btn-primary" href="{% url 'dashboard' %}">Перейти к новому сбору</a>
+  </div>
+</div>
+{% endblock %}

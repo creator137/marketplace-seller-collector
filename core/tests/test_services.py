@@ -38,6 +38,16 @@ class CityMatchTest(TestCase):
         self.assertIsNone(find_city_in_address("Москва, Тверская 1", cities))
         self.assertIsNone(find_city_in_address("", cities))
 
+    def test_extract_any_city_from_address(self):
+        from core.citymatch import extract_city_from_address
+
+        self.assertEqual(extract_city_from_address("г Москва, ул Новодмитровская, д 2"), "Москва")
+        self.assertEqual(extract_city_from_address("г. Улан-Удэ, р-н Октябрьский"), "Улан-Удэ")
+        self.assertEqual(extract_city_from_address("Московская обл, г Одинцово, пгт Новоивановское"), "Одинцово")
+        self.assertEqual(extract_city_from_address("Липецк, ул А.Г. Стаханова"), "Липецк")
+        self.assertIsNone(extract_city_from_address("Республика Калмыкия, Малодербетовский район"))
+        self.assertIsNone(extract_city_from_address(""))
+
 
 class SellerUpsertTest(TestCase):
     def _data(self, **kw):
@@ -88,6 +98,16 @@ class SellerUpsertTest(TestCase):
         self.assertIsNotNone(seller.city)
         self.assertEqual(seller.city.name, "Екатеринбург")
 
+    def test_city_created_when_missing_from_directory(self):
+        upsert_seller(self._data(
+            external_seller_id="msk",
+            legal_address="г Москва, ул Новодмитровская, д 2 к 2",
+        ))
+        seller = Seller.objects.get(external_seller_id="msk")
+        self.assertIsNotNone(seller.city)
+        self.assertEqual(seller.city.name, "Москва")
+        self.assertTrue(City.objects.filter(normalized="москва").exists())
+
     def test_contact_type_switch_city_phone(self):
         upsert_seller(self._data(mobile_phones=[], city_phones=["347 250-12-34"]))
         seller = Seller.objects.first()
@@ -114,12 +134,16 @@ class DaDataMergeTest(TestCase):
             "value": "ООО Ромашка",
             "data": {
                 "inn": "0277001234", "ogrn": "1027700123456",
-                "address": {"value": "г. Уфа, ул. Ленина, 1"},
+                "address": {
+                    "value": "г. Уфа, ул. Ленина, 1",
+                    "data": {"city": "Уфа"},
+                },
                 "phones": [{"value": "+7 (917) 555-66-77"}],
                 "emails": [{"value": "info@romashka.ru"}],
             },
         })
         self.assertEqual(fields["name"], "ООО Ромашка")
+        self.assertEqual(fields["city"], "Уфа")
         self.assertEqual(fields["mobile_phones"], ["+7 (917) 555-66-77"])
         self.assertEqual(fields["emails"], ["info@romashka.ru"])
         self.assertEqual(fields["website"], "")

@@ -12,8 +12,9 @@ from core.models import Category, City, CollectionJob, CollectionJobSeller, Mark
 class FakeStreamingAdapter(MarketplaceAdapter):
     code = Marketplace.OZON
 
-    def __init__(self, mode="normal"):
+    def __init__(self, mode="normal", seller_count=1):
         self.mode = mode
+        self.seller_count = seller_count
         self.iter_calls = 0
         self.detail_calls = 0
         self.starts = []
@@ -24,7 +25,7 @@ class FakeStreamingAdapter(MarketplaceAdapter):
 
     def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
         self.iter_calls += 1
-        self.starts.append((start_page, start_cursor))
+        self.starts.append((start_page, start_cursor, max_sellers))
         if self.mode == "blocked_discovery":
             yield SellerData(Marketplace.OZON, "before-block", name="Before"), {
                 "page": 2, "cursor": "/search?page=2", "finished": False,
@@ -34,9 +35,14 @@ class FakeStreamingAdapter(MarketplaceAdapter):
         if self.mode == "empty":
             yield None, {"page": 1, "cursor": None, "finished": True}
             return
-        yield SellerData(Marketplace.OZON, "seller-1", name="Discovered"), {
-            "page": 2, "cursor": None, "finished": True,
-        }
+        limit = max_sellers or self.seller_count
+        for idx in range(1, self.seller_count + 1):
+            if max_sellers and idx > max_sellers:
+                break
+            finished = idx >= min(self.seller_count, limit if max_sellers else self.seller_count)
+            yield SellerData(Marketplace.OZON, f"seller-{idx}", name=f"Discovered {idx}"), {
+                "page": 2, "cursor": None, "finished": finished,
+            }
         yield None, {"page": 2, "cursor": None, "finished": True}
 
     def fetch_seller(self, ref):
@@ -44,12 +50,17 @@ class FakeStreamingAdapter(MarketplaceAdapter):
         if self.block_once:
             self.block_once = False
             raise CollectionBlocked("detail blocked")
+        # Alternate cities so city-targeted jobs must oversample.
+        if str(ref).endswith(("2", "4", "6", "8", "0")):
+            address = "г Москва, Тверская 1"
+        else:
+            address = "г. Уфа, ул. Ленина, 1"
         return SellerData(
             Marketplace.OZON,
             ref,
             name="Detailed",
             inn="7801234567",
-            legal_address="г. Уфа, ул. Ленина, 1",
+            legal_address=address,
         )
 
 
@@ -82,7 +93,42 @@ class CollectionPipelineTest(TestCase):
             from core.tasks import run_collection_job
 
             run_collection_job(job.id)
-        self.assertEqual(adapter.starts[-1], (2, "/search?page=2"))
+        self.assertEqual(adapter.starts[-1], (2, "/search?page=2", 99))  # remaining after 1 discovered, default max 100
+
+    def test_job_max_sellers_limits_discovery(self):
+        job = self.make_job()
+        job.max_sellers = 2
+        job.save(update_fields=["max_sellers"])
+        adapter = FakeStreamingAdapter(seller_count=10)
+        with patch("core.tasks.get_adapter", return_value=adapter), patch("core.tasks.enrich_with_dadata"):
+            from core.tasks import run_collection_job
+
+            run_collection_job(job.id)
+        job.refresh_from_db()
+        self.assertEqual(job.status, CollectionJob.Status.COMPLETED)
+        self.assertEqual(job.job_sellers.count(), 2)
+        self.assertEqual(job.found, 2)
+        self.assertEqual(adapter.starts[0][2], 2)  # max_sellers passed to adapter
+
+    def test_city_goal_keeps_discovering_until_matched(self):
+        """max_sellers counts only sellers whose city matches the job cities."""
+        ufa = City.objects.get_or_create(name="Уфа")[0]
+        job = self.make_job(cities=[ufa])
+        job.max_sellers = 2
+        job.save(update_fields=["max_sellers"])
+        adapter = FakeStreamingAdapter(seller_count=20)
+        with patch("core.tasks.get_adapter", return_value=adapter), patch("core.tasks.enrich_with_dadata"):
+            from core.tasks import run_collection_job
+
+            run_collection_job(job.id)
+        job.refresh_from_db()
+        self.assertEqual(job.status, CollectionJob.Status.COMPLETED)
+        matched = Seller.objects.filter(collection_links__job=job, city=ufa).count()
+        self.assertGreaterEqual(matched, 2)
+        self.assertEqual(job.found, matched)
+        # Had to look at more than 2 raw refs because some are Москва.
+        self.assertGreaterEqual(job.job_sellers.count(), matched)
+        self.assertGreaterEqual(adapter.iter_calls, 1)
 
     def test_blocked_detail_is_retryable_on_resume(self):
         job = self.make_job()

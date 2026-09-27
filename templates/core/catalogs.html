@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Справочники — Seller Collector{% endblock %}
+{% block content %}
+<div class="page-header text-center">
+  <div class="page-pretitle">Настройки</div>
+  <h2 class="page-title">Справочники</h2>
+  <div class="text-secondary mt-1">
+    Города, категории и сессии маркетплейсов.
+    Продавцы и задания — в разделах «Продавцы» и «История».
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3 justify-content-center">
+  <li class="nav-item">
+    <a class="nav-link {% if section == 'cities' %}active{% endif %}" href="{% url 'catalogs' %}?section=cities">Города</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if section == 'categories' %}active{% endif %}" href="{% url 'catalogs' %}?section=categories&marketplace={{ marketplace_filter }}">Категории</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if section == 'sessions' %}active{% endif %}" href="{% url 'catalogs' %}?section=sessions">Сессии</a>
+  </li>
+</ul>
+
+{% if section == 'cities' %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Города</h3>
+  </div>
+  <div class="card-body border-bottom">
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_city">
+      <div class="col-md-5">
+        <label class="form-label required" for="city_name">Название</label>
+        <input class="form-control" id="city_name" name="name" placeholder="Казань" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label" for="dest_code">dest WB</label>
+        <input class="form-control" id="dest_code" name="dest_code" placeholder="необязательно">
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100" type="submit">Добавить</button>
+      </div>
+    </form>
+    <small class="form-hint d-block mt-2">
+      «Выключить» скрывает город из формы сбора. «Удалить» убирает запись полностью
+      (у связанных продавцов город станет пустым).
+    </small>
+  </div>
+  <div class="table-responsive">
+    <table class="table card-table table-vcenter table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Город</th>
+          <th>dest WB</th>
+          <th>Статус</th>
+          <th class="w-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for city in cities %}
+        <tr>
+          <td class="fw-medium">{{ city.name }}</td>
+          <td class="text-secondary">{{ city.dest_code|default:"—" }}</td>
+          <td>
+            {% if city.is_active %}
+              <span class="badge bg-success-lt text-success">активен</span>
+            {% else %}
+              <span class="badge bg-secondary-lt">выключен</span>
+            {% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <form method="post" class="d-inline">{% csrf_token %}
+              <input type="hidden" name="action" value="toggle_city">
+              <input type="hidden" name="city_id" value="{{ city.id }}">
+              <button class="btn btn-sm btn-outline-secondary" type="submit">
+                {% if city.is_active %}Выключить{% else %}Включить{% endif %}
+              </button>
+            </form>
+            <form method="post" class="d-inline" onsubmit="return confirm('Удалить город «{{ city.name }}»?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_city">
+              <input type="hidden" name="city_id" value="{{ city.id }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="text-center text-secondary py-4">Городов пока нет</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% elif section == 'categories' %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap gap-2">
+    <h3 class="card-title mb-0">Категории</h3>
+    <form method="get" class="ms-auto">
+      <input type="hidden" name="section" value="categories">
+      <select name="marketplace" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for value, label in marketplaces %}
+          <option value="{{ value }}" {% if marketplace_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+  <div class="card-body border-bottom">
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_category">
+      <div class="col-md-3">
+        <label class="form-label required" for="cat_marketplace">Маркетплейс</label>
+        <select class="form-select" id="cat_marketplace" name="marketplace" required>
+          {% for value, label in marketplaces %}
+            <option value="{{ value }}" {% if marketplace_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label required" for="cat_title">Название</label>
+        <input class="form-control" id="cat_title" name="title" placeholder="Наушники" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label required" for="cat_external_id">Запрос / путь / id</label>
+        <input class="form-control" id="cat_external_id" name="external_id"
+               placeholder="наушники или /category/..." required>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-primary w-100" type="submit">Добавить</button>
+      </div>
+    </form>
+    <small class="form-hint d-block mt-2">
+      Ozon / Яндекс.Маркет — поисковый текст или путь категории.
+      Wildberries — обычно <code>shard|query</code> или просто поисковый запрос.
+      «Удалить» убирает категорию из справочника (из старых заданий она пропадёт).
+    </small>
+  </div>
+  <div class="table-responsive">
+    <table class="table card-table table-vcenter table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th>Внешний id</th>
+          <th>Статус</th>
+          <th class="w-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for cat in categories %}
+        <tr>
+          <td class="fw-medium">{{ cat.title }}</td>
+          <td><code>{{ cat.external_id }}</code></td>
+          <td>
+            {% if cat.is_active %}
+              <span class="badge bg-success-lt text-success">активна</span>
+            {% else %}
+              <span class="badge bg-secondary-lt">выключена</span>
+            {% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <form method="post" class="d-inline">{% csrf_token %}
+              <input type="hidden" name="action" value="toggle_category">
+              <input type="hidden" name="category_id" value="{{ cat.id }}">
+              <input type="hidden" name="marketplace" value="{{ marketplace_filter }}">
+              <button class="btn btn-sm btn-outline-secondary" type="submit">
+                {% if cat.is_active %}Выключить{% else %}Включить{% endif %}
+              </button>
+            </form>
+            <form method="post" class="d-inline" onsubmit="return confirm('Удалить категорию «{{ cat.title }}»?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_category">
+              <input type="hidden" name="category_id" value="{{ cat.id }}">
+              <input type="hidden" name="marketplace" value="{{ marketplace_filter }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="text-center text-secondary py-4">Категорий для этого маркетплейса нет</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Сессии маркетплейсов</h3>
+  </div>
+  <div class="card-body">
+    <p class="text-secondary mb-4">
+      Cookies из браузера (строка Cookie или JSON). После сохранения файл
+      <code>runtime/sessions/&lt;маркетплейс&gt;.json</code> обновляется сразу —
+      новые задания подхватят сессию без перезапуска.
+    </p>
+    <div class="row g-4">
+      {% for item in sessions %}
+      <div class="col-lg-4">
+        <div class="card card-sm">
+          <div class="card-header">
+            <h3 class="card-title">{{ item.label }}</h3>
+            <div class="card-actions">
+              <span class="badge {% if item.object %}bg-success-lt text-success{% else %}bg-secondary-lt{% endif %}">
+                {{ item.file_status }}
+              </span>
+            </div>
+          </div>
+          <div class="card-body">
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="save_session">
+              <input type="hidden" name="marketplace" value="{{ item.marketplace }}">
+              <div class="mb-2">
+                <label class="form-label" for="cookies_{{ item.marketplace }}">Cookies</label>
+                <textarea class="form-control font-monospace" id="cookies_{{ item.marketplace }}"
+                          name="cookies" rows="5" required
+                          placeholder='{"name":"value"} или name=value; name2=value2'>{% if item.object %}{{ item.object.cookies }}{% endif %}</textarea>
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="note_{{ item.marketplace }}">Заметка</label>
+                <input class="form-control" id="note_{{ item.marketplace }}" name="note"
+                       value="{% if item.object %}{{ item.object.note }}{% endif %}"
+                       placeholder="откуда взяли cookies">
+              </div>
+              <button class="btn btn-primary" type="submit">Сохранить</button>
+              {% if item.object %}
+              <div class="form-hint mt-2">Обновлена {{ item.object.updated_at|date:"d.m.Y H:i" }}</div>
+              {% endif %}
+            </form>
+            {% if item.object %}
+            <form method="post" class="mt-2" onsubmit="return confirm('Удалить сессию {{ item.label }}?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_session">
+              <input type="hidden" name="session_id" value="{{ item.object.id }}">
+              <button class="btn btn-outline-danger btn-sm" type="submit">Удалить сессию</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

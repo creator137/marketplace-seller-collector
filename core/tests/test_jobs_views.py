@@ -14,7 +14,7 @@ class JobRunnerTest(TestCase):
         user = User.objects.create_user("u", password="pass12345")
         cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
         city = City.objects.get_or_create(name="Уфа")[0]
-        job = CollectionJob.objects.create(user=user, marketplace=Marketplace.OZON)
+        job = CollectionJob.objects.create(user=user, marketplace=Marketplace.OZON, max_sellers=1)
         job.categories.set([cat])
         job.cities.set([city])
         with patch("core.tasks.get_adapter") as get_adapter:
@@ -27,10 +27,32 @@ class JobRunnerTest(TestCase):
         return job
 
     def test_job_runs_and_completes(self):
-        data = SellerData(marketplace=Marketplace.OZON, external_seller_id="10", name="S1")
-        job = self._run_job(lambda *a, **kw: [data])
+        data = SellerData(
+            marketplace=Marketplace.OZON,
+            external_seller_id="10",
+            name="S1",
+            legal_address="г. Уфа, ул. Ленина, 1",
+        )
+
+        def discover(*a, **kw):
+            return [data]
+
+        user = User.objects.create_user("u", password="pass12345")
+        cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
+        city = City.objects.get_or_create(name="Уфа")[0]
+        job = CollectionJob.objects.create(user=user, marketplace=Marketplace.OZON, max_sellers=1)
+        job.categories.set([cat])
+        job.cities.set([city])
+        with patch("core.tasks.get_adapter") as get_adapter:
+            adapter = get_adapter.return_value
+            adapter.discover_sellers.side_effect = discover
+            adapter.fetch_seller.return_value = data
+            from core.tasks import run_collection_job
+
+            run_collection_job(job.id)
+        job.refresh_from_db()
         self.assertEqual(job.status, CollectionJob.Status.COMPLETED)
-        self.assertEqual(job.found, 1)
+        self.assertGreaterEqual(job.found, 1)
         self.assertEqual(Seller.objects.count(), 1)
 
     def test_one_seller_failure_does_not_kill_job(self):
@@ -68,9 +90,81 @@ class ViewsTest(TestCase):
     def test_dashboard_and_results(self):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Выйти")
+        self.assertContains(r, "Сколько собрать")
+        self.assertContains(r, 'name="max_sellers"')
         r = self.client.get("/results/")
         self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Выйти")
 
+    def test_start_job_requires_max_sellers(self):
+        Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
+        city = City.objects.get_or_create(name="Уфа")[0]
+        cat = Category.objects.get(marketplace=Marketplace.OZON, external_id="q")
+        r = self.client.post("/", {
+            "marketplace": Marketplace.OZON,
+            "categories": [cat.id],
+            "cities": [city.id],
+            "max_sellers": "0",
+        })
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(CollectionJob.objects.count(), 0)
+
+    def test_start_job_saves_max_sellers(self):
+        cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
+        city = City.objects.get_or_create(name="Уфа")[0]
+        with patch("core.views._rq_queue") as queue:
+            queue.return_value.enqueue.side_effect = RuntimeError("no redis")
+            with patch("core.views._run_job_in_background"):
+                r = self.client.post("/", {
+                    "marketplace": Marketplace.OZON,
+                    "categories": [cat.id],
+                    "cities": [city.id],
+                    "max_sellers": "42",
+                })
+        self.assertEqual(r.status_code, 302)
+        job = CollectionJob.objects.get()
+        self.assertEqual(job.max_sellers, 42)
+        self.assertEqual(job.total, 42)
+
+    def test_results_by_job_show_only_selected_cities(self):
+        """Job results list sellers that match the selected cities."""
+        from core.models import CollectionJobSeller
+
+        city = City.objects.get_or_create(name="Уфа")[0]
+        job = CollectionJob.objects.create(marketplace=Marketplace.OZON, max_sellers=10)
+        job.cities.set([city])
+        matched = Seller.objects.create(
+            marketplace=Marketplace.OZON,
+            external_seller_id="in-ufa",
+            name="В Уфе",
+            city=city,
+        )
+        other = Seller.objects.create(
+            marketplace=Marketplace.OZON,
+            external_seller_id="no-city",
+            name="Без города",
+        )
+        CollectionJobSeller.objects.create(
+            job=job, seller=matched, external_seller_id="in-ufa", detail_status="done",
+        )
+        CollectionJobSeller.objects.create(
+            job=job, seller=other, external_seller_id="no-city", detail_status="done",
+        )
+        r = self.client.get(f"/results/?job={job.id}")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "В Уфе")
+        self.assertNotContains(r, "Без города")
+
+    def test_start_job_requires_city(self):
+        cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
+        r = self.client.post("/", {
+            "marketplace": Marketplace.OZON,
+            "categories": [cat.id],
+            "max_sellers": "10",
+        })
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(CollectionJob.objects.count(), 0)
     def test_requires_login(self):
         self.client.logout()
         self.assertEqual(self.client.get("/results/").status_code, 302)

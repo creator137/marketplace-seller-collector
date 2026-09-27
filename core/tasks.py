@@ -1,4 +1,9 @@
-"""Resumable streaming discovery -> details -> DaData collection pipeline."""
+"""Resumable streaming discovery -> details -> DaData collection pipeline.
+
+When the job has selected cities, ``max_sellers`` means “sellers from those
+cities”, not raw marketplace refs. Discovery continues (with oversampling)
+until the city goal is reached or the source is exhausted.
+"""
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +15,7 @@ from django.utils import timezone
 from core.adapters import get_adapter
 from core.adapters.base import CollectionError, MarketplaceAdapter, SellerData
 from core.httpclient import HttpError
-from core.models import CollectionJob, CollectionJobSeller
+from core.models import CollectionJob, CollectionJobSeller, Seller
 from core.services import enrich_with_dadata, upsert_seller
 
 log = logging.getLogger("core.tasks")
@@ -69,8 +74,6 @@ def _iter_adapter(adapter, category, city, remaining, state):
             start_cursor=state.get("cursor"),
         )
 
-    # Compatibility for small custom/test adapters that only implement the
-    # original list API.
     def fallback():
         for data in adapter.discover_sellers(category, city=city, limit=remaining):
             yield data, {"page": 1, "cursor": None, "finished": True}
@@ -79,38 +82,92 @@ def _iter_adapter(adapter, category, city, remaining, state):
     return fallback()
 
 
-def _save_discovery_checkpoint(job, checkpoint, job_count):
+def _target(job) -> int:
+    value = int(getattr(job, "max_sellers", 0) or 0)
+    if settings.COLLECT_MAX_SELLERS:
+        value = min(value, settings.COLLECT_MAX_SELLERS) if value else settings.COLLECT_MAX_SELLERS
+    return value
+
+
+def _goal_count(job, cities) -> int:
+    """Sellers that count toward the job goal."""
+    qs = Seller.objects.filter(collection_links__job=job)
+    if cities:
+        qs = qs.filter(city__in=cities)
+    return qs.distinct().count()
+
+
+def _refresh_progress(job, cities):
+    job.total = _target(job) or job.job_sellers.count()
+    job.found = _goal_count(job, cities)
+    job.processed = job.job_sellers.filter(
+        detail_status__in=("done", "partial", "failed", "processing"),
+    ).count()
+    job.errors_count = job.job_sellers.filter(
+        detail_status__in=("retry", "blocked", "failed"),
+    ).count()
+    job.save(update_fields=["total", "found", "processed", "errors_count", "checkpoint"])
+
+
+def _discovery_exhausted(job) -> bool:
+    checkpoint = job.checkpoint or {}
+    states = checkpoint.get("discovery") or {}
+    if not states:
+        return False
+    done = set(checkpoint.get("discovery_done") or [])
+    return all(state.get("finished") or key in done for key, state in states.items())
+
+
+def _raw_safety_cap(job, cities) -> int:
+    """Hard stop on total discovered refs when hunting for city matches."""
+    target = _target(job) or 0
+    if settings.COLLECT_MAX_SELLERS:
+        return settings.COLLECT_MAX_SELLERS
+    if cities:
+        return max(target * 40, target + 200, 100)
+    return target or 0
+
+
+def _save_discovery_checkpoint(job, checkpoint, job_count, cities):
     job.checkpoint = checkpoint
-    job.total = job_count
-    job.found = job.job_sellers.exclude(seller=None).count()
-    job.save(update_fields=["checkpoint", "total", "found"])
+    job.total = _target(job) or job_count
+    job.found = _goal_count(job, cities)
+    job.processed = job_count
+    job.save(update_fields=["checkpoint", "total", "found", "processed"])
 
 
-def _discover(job, adapter, categories, cities):
-    """Consume adapter pages incrementally; no full discovery list is held."""
+def _discover(job, adapter, categories, cities, raw_cap):
+    """Discover until ``raw_cap`` job_sellers exist or sources finish.
+
+    Hitting ``raw_cap`` pauses this round without marking discovery finished,
+    so city-targeted jobs can resume after details.
+    """
     checkpoint = job.checkpoint or {}
     states = checkpoint.setdefault("discovery", {})
     completed = set(checkpoint.get("discovery_done", []))
-    max_total = settings.COLLECT_MAX_SELLERS
     job_count = job.job_sellers.count()
+    created_this_round = 0
 
     for category in categories:
         for city in _search_cities(job, cities):
+            if raw_cap and job_count >= raw_cap:
+                return created_this_round
             key = _discovery_key(job, category, city)
             state = dict(states.get(key) or {})
             if state.get("finished") or key in completed:
                 continue
-            remaining = max_total - job_count if max_total else 0
-            if max_total and remaining <= 0:
-                state.update({"finished": True, "reason": "max_sellers", "discovered_count": job_count})
-                states[key] = state
-                completed.add(key)
+            remaining = max(0, raw_cap - job_count) if raw_cap else 0
+            if raw_cap and remaining <= 0:
                 continue
 
             state.setdefault("page", 1)
             state.setdefault("cursor", None)
             state.setdefault("discovered_count", 0)
-            checkpoint.update({"current_key": key, "current_page": state["page"], "current_cursor": state.get("cursor")})
+            checkpoint.update({
+                "current_key": key,
+                "current_page": state["page"],
+                "current_cursor": state.get("cursor"),
+            })
             job.checkpoint = checkpoint
             job.save(update_fields=["checkpoint"])
 
@@ -121,7 +178,7 @@ def _discover(job, adapter, categories, cities):
                 for data, page_checkpoint in iterator:
                     last_item_checkpoint = page_checkpoint
                     if data is not None:
-                        if max_total and job_count >= max_total:
+                        if raw_cap and job_count >= raw_cap:
                             break
                         seller = upsert_seller(data)
                         _, created = CollectionJobSeller.objects.get_or_create(
@@ -131,44 +188,44 @@ def _discover(job, adapter, categories, cities):
                         )
                         if created:
                             job_count += 1
+                            created_this_round += 1
                         state["discovered_count"] = state.get("discovered_count", 0) + (1 if created else 0)
                         continue
 
-                    # Page boundary: all seller refs from that page have been
-                    # persisted, so this cursor is safe for resume.
                     state.update(page_checkpoint or {})
                     states[key] = state
                     page_boundary_seen = True
-                    checkpoint.update({"current_key": key, "current_page": state.get("page", 1), "current_cursor": state.get("cursor")})
+                    checkpoint.update({
+                        "current_key": key,
+                        "current_page": state.get("page", 1),
+                        "current_cursor": state.get("cursor"),
+                    })
                     if state.get("finished"):
                         completed.add(key)
                         checkpoint["discovery_done"] = sorted(completed)
-                    _save_discovery_checkpoint(job, checkpoint, job_count)
-                    if max_total and job_count >= max_total:
-                        state.update({"finished": True, "reason": "max_sellers"})
-                        completed.add(key)
-                        checkpoint["discovery_done"] = sorted(completed)
-                        _save_discovery_checkpoint(job, checkpoint, job_count)
+                    _save_discovery_checkpoint(job, checkpoint, job_count, cities)
+                    if raw_cap and job_count >= raw_cap:
                         break
             except Exception:
-                # If a page yielded sellers but failed before its boundary,
-                # its page checkpoint is still safe because the page was fully
-                # parsed before yielding. Persist it for an exact retry point.
                 if last_item_checkpoint and not page_boundary_seen:
                     state.update(last_item_checkpoint)
                     states[key] = state
-                    checkpoint.update({"current_key": key, "current_page": state.get("page", 1), "current_cursor": state.get("cursor")})
-                    _save_discovery_checkpoint(job, checkpoint, job_count)
+                    checkpoint.update({
+                        "current_key": key,
+                        "current_page": state.get("page", 1),
+                        "current_cursor": state.get("cursor"),
+                    })
+                    _save_discovery_checkpoint(job, checkpoint, job_count, cities)
                 raise
-            if not state.get("finished") and max_total and job_count >= max_total:
-                state.update({"finished": True, "reason": "max_sellers"})
+            states[key] = state
+            if state.get("finished"):
                 completed.add(key)
                 checkpoint["discovery_done"] = sorted(completed)
-                _save_discovery_checkpoint(job, checkpoint, job_count)
-    return checkpoint
+                _save_discovery_checkpoint(job, checkpoint, job_count, cities)
+    return created_this_round
 
 
-def _process_details(job):
+def _process_details(job, cities):
     """Fetch detail chunks concurrently while persisting every link status."""
     job.job_sellers.filter(detail_status="processing").update(detail_status="retry")
     links_qs = job.job_sellers.select_related("seller").filter(
@@ -182,9 +239,6 @@ def _process_details(job):
     def fetch(link):
         if not hasattr(local, "adapter"):
             local.adapter = get_adapter(job.marketplace)
-        # Ozon detail pages require the slug URL that was present in the
-        # discovery response; a bare numeric id may render an empty page.
-        # Keep the numeric id as fallback for adapters that only accept ids.
         fallback_ref = link.external_seller_id
         seller_ref = (getattr(link, "seller", None) and getattr(link.seller, "seller_url", "")) or fallback_ref
         try:
@@ -209,6 +263,7 @@ def _process_details(job):
                         link.detail_status = "done"
                         link.detail_error = ""
                         enrich_with_dadata(link.seller)
+                        link.seller.refresh_from_db(fields=["city_id", "legal_address", "inn", "ogrn"])
                     else:
                         link.detail_status = "partial"
                         link.detail_error = "detail unavailable"
@@ -224,18 +279,15 @@ def _process_details(job):
                         blocked_exc = exc
                 link.save(update_fields=["seller", "detail_status", "detail_error"])
 
-            job.processed = job.job_sellers.filter(detail_status__in=("done", "partial", "failed")).count()
-            job.errors_count = job.job_sellers.filter(detail_status__in=("retry", "blocked", "failed")).count()
-            job.found = job.job_sellers.exclude(seller=None).count()
-            job.checkpoint = {**(job.checkpoint or {}), "detail_processed": job.processed}
-            job.save(update_fields=["processed", "errors_count", "found", "checkpoint"])
+            job.checkpoint = {**(job.checkpoint or {}), "detail_processed": True}
+            _refresh_progress(job, cities)
             if blocked_exc:
                 raise blocked_exc
+            # Stop detailing more chunks once the city/any goal is reached.
+            if _target(job) and _goal_count(job, cities) >= _target(job):
+                break
 
-    job.processed = job.job_sellers.filter(detail_status__in=("done", "partial", "failed")).count()
-    job.errors_count = job.job_sellers.filter(detail_status__in=("retry", "blocked", "failed")).count()
-    job.found = job.job_sellers.exclude(seller=None).count()
-    job.save(update_fields=["processed", "errors_count", "found"])
+    _refresh_progress(job, cities)
 
 
 def run_collection_job(job_id: int):
@@ -253,8 +305,50 @@ def run_collection_job(job_id: int):
         if not categories:
             job.fail("Нет выбранных категорий", "empty")
             return
-        _discover(job, adapter, categories, cities)
-        _process_details(job)
+        target = _target(job)
+        if target < 1:
+            job.fail("Не задан лимит сбора", "empty")
+            return
+
+        safety_cap = _raw_safety_cap(job, cities)
+        while True:
+            matched = _goal_count(job, cities)
+            _refresh_progress(job, cities)
+            if matched >= target:
+                break
+
+            before = job.job_sellers.count()
+            if before >= safety_cap:
+                log.info(
+                    "Job %s hit discovery safety cap %s with only %s city matches",
+                    job_id, safety_cap, matched,
+                )
+                break
+            if _discovery_exhausted(job) and not job.job_sellers.filter(
+                detail_status__in=("pending", "retry", "blocked", "processing"),
+            ).exists():
+                break
+
+            need = target - matched
+            # Oversample when filtering by city: many sellers will be elsewhere.
+            if cities:
+                batch = max(need * 3, need)
+            else:
+                batch = need
+            raw_cap = min(before + batch, safety_cap)
+
+            created = _discover(job, adapter, categories, cities, raw_cap=raw_cap)
+            _process_details(job, cities)
+            if _goal_count(job, cities) >= target:
+                break
+
+            after = job.job_sellers.count()
+            if created == 0 and after == before and _discovery_exhausted(job):
+                break
+            if after == before and not job.job_sellers.filter(
+                detail_status__in=("pending", "retry", "blocked"),
+            ).exists() and _discovery_exhausted(job):
+                break
     except Exception as exc:
         status = _classify_error(exc)
         log.exception("Job %s stopped with %s", job_id, status)
@@ -262,12 +356,31 @@ def run_collection_job(job_id: int):
         _pause(job, exc, status)
         return
 
+    cities = list(job.cities.all())
+    matched = _goal_count(job, cities)
     job.status = CollectionJob.Status.COMPLETED
-    job.source_status = "empty" if not job.job_sellers.exists() else "success"
-    job.total = job.job_sellers.count()
-    job.found = job.job_sellers.exclude(seller=None).count()
+    if matched == 0 and not job.job_sellers.exists():
+        job.source_status = "empty"
+        job.error_message = "Источник успешно ответил, но продавцы не найдены."
+    elif matched < _target(job):
+        job.source_status = "partial"
+        if cities:
+            job.error_message = (
+                f"Найдено {matched} из {_target(job)} продавцов в выбранных городах. "
+                f"Источник исчерпан или достигнут лимит поиска."
+            )
+        else:
+            job.error_message = (
+                f"Найдено {matched} из {_target(job)} продавцов. "
+                f"Источник исчерпан или достигнут лимит поиска."
+            )
+    else:
+        job.source_status = "success"
+        job.error_message = ""
+    job.total = _target(job)
+    job.found = matched
     job.processed = job.job_sellers.filter(detail_status__in=("done", "partial", "failed")).count()
     job.finished_at = timezone.now()
-    if not job.job_sellers.exists() and not job.error_message:
-        job.error_message = "Источник успешно ответил, но продавцы не найдены."
-    job.save(update_fields=["status", "source_status", "total", "found", "processed", "finished_at", "error_message"])
+    job.save(update_fields=[
+        "status", "source_status", "total", "found", "processed", "finished_at", "error_message",
+    ])

@@ -9,7 +9,8 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from core.export import export_all_xlsx, export_job_xlsx
-from core.models import Category, City, CollectionJob, Marketplace, Seller
+from core.citymatch import normalize_city_name
+from core.models import Category, City, CollectionJob, Marketplace, MarketplaceSession, Seller
 from core.tasks import run_collection_job
 
 log = logging.getLogger("core.views")
@@ -45,10 +46,28 @@ def dashboard(request):
         marketplace = request.POST.get("marketplace")
         category_ids = request.POST.getlist("categories")
         city_ids = request.POST.getlist("cities")
+        try:
+            max_sellers = int(request.POST.get("max_sellers") or 0)
+        except (TypeError, ValueError):
+            max_sellers = 0
         if marketplace not in Marketplace.values or not category_ids:
             messages.error(request, "Выберите маркетплейс и хотя бы одну категорию")
             return redirect("dashboard")
-        job = CollectionJob.objects.create(user=request.user, marketplace=marketplace)
+        if not city_ids:
+            messages.error(request, "Выберите хотя бы один город — лимит считается по продавцам из этих городов")
+            return redirect("dashboard")
+        if max_sellers < 1:
+            messages.error(request, "Укажите, сколько продавцов собирать (минимум 1)")
+            return redirect("dashboard")
+        if max_sellers > 100000:
+            messages.error(request, "Слишком большой лимит — максимум 100 000 за один запуск")
+            return redirect("dashboard")
+        job = CollectionJob.objects.create(
+            user=request.user,
+            marketplace=marketplace,
+            max_sellers=max_sellers,
+            total=max_sellers,
+        )
         job.cities.set(City.objects.filter(id__in=city_ids))
         job.categories.set(Category.objects.filter(id__in=category_ids, marketplace=marketplace))
         try:
@@ -59,6 +78,169 @@ def dashboard(request):
             _run_job_in_background(job.id)
         return redirect("job_detail", job_id=job.id)
     return render(request, "core/dashboard.html", context)
+
+
+@login_required
+def how_it_works(request):
+    return render(request, "core/how_it_works.html")
+
+
+@login_required
+def catalogs(request):
+    """Manage cities, categories and marketplace sessions from the main UI."""
+    section = request.GET.get("section", "cities")
+    if section not in ("cities", "categories", "sessions"):
+        section = "cities"
+    marketplace_filter = request.GET.get("marketplace", Marketplace.OZON)
+    if marketplace_filter not in Marketplace.values:
+        marketplace_filter = Marketplace.OZON
+
+    def _redirect(sec=None, marketplace=None):
+        sec = sec or section
+        params = f"?section={sec}"
+        if sec == "categories":
+            params += f"&marketplace={marketplace or marketplace_filter}"
+        return redirect(f"{reverse('catalogs')}{params}")
+
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+
+        if action == "add_city":
+            name = (request.POST.get("name") or "").strip()
+            dest_code = (request.POST.get("dest_code") or "").strip()
+            if not name:
+                messages.error(request, "Укажите название города")
+            else:
+                normalized = normalize_city_name(name)
+                if City.objects.filter(Q(name__iexact=name) | Q(normalized=normalized)).exists():
+                    messages.error(request, f"Город «{name}» уже есть в справочнике")
+                else:
+                    City.objects.create(name=name, dest_code=dest_code, is_active=True)
+                    messages.success(request, f"Город «{name}» добавлен")
+            return _redirect("cities")
+
+        if action == "toggle_city":
+            city = City.objects.filter(pk=request.POST.get("city_id")).first()
+            if city:
+                city.is_active = not city.is_active
+                city.save(update_fields=["is_active"])
+                messages.success(
+                    request,
+                    f"Город «{city.name}» {'включён' if city.is_active else 'выключен'}",
+                )
+            return _redirect("cities")
+
+        if action == "delete_city":
+            city = City.objects.filter(pk=request.POST.get("city_id")).first()
+            if city:
+                name = city.name
+                city.delete()
+                messages.success(request, f"Город «{name}» удалён")
+            return _redirect("cities")
+
+        if action == "add_category":
+            marketplace = request.POST.get("marketplace", "")
+            title = (request.POST.get("title") or "").strip()
+            external_id = (request.POST.get("external_id") or "").strip()
+            if marketplace not in Marketplace.values:
+                messages.error(request, "Выберите маркетплейс")
+            elif not title or not external_id:
+                messages.error(request, "Укажите название и внешний id / запрос категории")
+            elif Category.objects.filter(marketplace=marketplace, external_id=external_id).exists():
+                messages.error(request, "Такая категория уже есть для этого маркетплейса")
+            else:
+                Category.objects.create(
+                    marketplace=marketplace,
+                    title=title,
+                    external_id=external_id,
+                    is_active=True,
+                )
+                messages.success(request, f"Категория «{title}» добавлена")
+            return _redirect("categories", marketplace)
+
+        if action == "toggle_category":
+            category = Category.objects.filter(pk=request.POST.get("category_id")).first()
+            marketplace = request.POST.get("marketplace") or marketplace_filter
+            if category:
+                category.is_active = not category.is_active
+                category.save(update_fields=["is_active"])
+                messages.success(
+                    request,
+                    f"Категория «{category.title}» {'включена' if category.is_active else 'выключена'}",
+                )
+            return _redirect("categories", marketplace)
+
+        if action == "delete_category":
+            category = Category.objects.filter(pk=request.POST.get("category_id")).first()
+            marketplace = request.POST.get("marketplace") or marketplace_filter
+            if category:
+                title = category.title
+                category.delete()
+                messages.success(request, f"Категория «{title}» удалена")
+            return _redirect("categories", marketplace)
+
+        if action == "save_session":
+            marketplace = request.POST.get("marketplace", "")
+            cookies = (request.POST.get("cookies") or "").strip()
+            note = (request.POST.get("note") or "").strip()
+            if marketplace not in Marketplace.values:
+                messages.error(request, "Выберите маркетплейс")
+            elif not cookies:
+                messages.error(request, "Вставьте cookies сессии")
+            else:
+                from core.httpclient import HttpClient
+
+                parsed = HttpClient.parse_cookies(cookies)
+                if not parsed:
+                    messages.error(request, "Не удалось разобрать cookies — проверьте формат")
+                else:
+                    session, _created = MarketplaceSession.objects.update_or_create(
+                        marketplace=marketplace,
+                        defaults={"cookies": cookies, "note": note, "source": "ui"},
+                    )
+                    messages.success(
+                        request,
+                        f"Сессия {session.get_marketplace_display()} сохранена "
+                        f"({len(parsed)} cookies)",
+                    )
+            return _redirect("sessions")
+
+        if action == "delete_session":
+            session = MarketplaceSession.objects.filter(pk=request.POST.get("session_id")).first()
+            if session:
+                label = session.get_marketplace_display()
+                marketplace = session.marketplace
+                session.delete()
+                from pathlib import Path
+
+                from django.conf import settings
+
+                path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
+                if path.exists():
+                    path.unlink()
+                messages.success(request, f"Сессия {label} удалена")
+            return _redirect("sessions")
+        messages.error(request, "Неизвестное действие")
+        return _redirect()
+
+    sessions = []
+    for value, label in Marketplace.choices:
+        obj = MarketplaceSession.objects.filter(marketplace=value).first()
+        sessions.append({
+            "marketplace": value,
+            "label": label,
+            "object": obj,
+            "file_status": MarketplaceSession.file_status(value),
+        })
+
+    return render(request, "core/catalogs.html", {
+        "section": section,
+        "cities": City.objects.all(),
+        "categories": Category.objects.filter(marketplace=marketplace_filter),
+        "marketplace_filter": marketplace_filter,
+        "marketplaces": Marketplace.choices,
+        "sessions": sessions,
+    })
 
 
 @login_required
@@ -115,6 +297,7 @@ def results(request):
     if job_id.isdigit():
         qs = qs.filter(collection_links__job_id=int(job_id)).distinct()
         job_filter = CollectionJob.objects.filter(pk=int(job_id)).first()
+        # Цель запуска — продавцы выбранных городов; остальные refs не показываем.
         if job_filter and job_filter.cities.exists():
             qs = qs.filter(city__in=job_filter.cities.all()).distinct()
     if city_id:

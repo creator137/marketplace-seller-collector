@@ -241,6 +241,11 @@ class CollectionJob(models.Model):
     cities = models.ManyToManyField(City, blank=True, related_name="jobs")
     categories = models.ManyToManyField(Category, blank=True, related_name="jobs")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    max_sellers = models.PositiveIntegerField(
+        "Сколько собирать",
+        default=100,
+        help_text="Лимит уникальных продавцов для этого запуска (минимум 1).",
+    )
     total = models.PositiveIntegerField("Всего", null=True, blank=True)
     processed = models.PositiveIntegerField("Обработано", default=0)
     found = models.PositiveIntegerField("Найдено", default=0)

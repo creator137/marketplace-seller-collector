@@ -53,6 +53,11 @@ SELLER_ID_RE = re.compile(r"seller[\"/]+(\d+)")
 SELLER_SLUG_RE = re.compile(r"/seller/([^/?#\"]+)")
 SLUG_ID_RE = re.compile(r"-(\d+)$")
 DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
+SHOP_INFO_LINK_RE = re.compile(r"/modal/shop-in-shop-info\?[^\"'\s]*seller_id=(\d+)")
+LEGAL_NAME_RE = re.compile(
+    r"((?:ИП|ООО|АО|ПАО|ЗАО)\s+[^\d<\n]{2,200})",
+    re.U,
+)
 
 
 def widget_state(data: dict, prefix: str) -> dict | None:
@@ -148,6 +153,49 @@ def seller_requisites(payload):
             if match:
                 found["ogrn"] = match.group(1)
     return found
+
+
+def _shop_info_seller_id(payload) -> str:
+    """Seller id from shop-in-shop-info modal links embedded in seller page widgets."""
+    blob = payload if isinstance(payload, str) else json.dumps(payload or {}, ensure_ascii=False)
+    match = SHOP_INFO_LINK_RE.search(blob)
+    return match.group(1) if match else ""
+
+
+def _legal_name_from_text(text: str) -> str:
+    cleaned = unescape(re.sub(r"<br\s*/?>", "\n", text or "", flags=re.I))
+    first_line = cleaned.splitlines()[0].strip() if cleaned.strip() else ""
+    match = LEGAL_NAME_RE.search(first_line)
+    name = (match.group(1) if match else first_line).strip()
+    name = re.sub(r"\s+\d{10,15}\s*$", "", name).strip()
+    return name[:512]
+
+
+def _parse_shop_info_modal(data: dict | None) -> dict:
+    """Parse /modal/shop-in-shop-info widgetStates: legal name + OGRN/INN text atoms."""
+    out = {"name": "", "inn": "", "ogrn": "", "texts": []}
+    if not data:
+        return out
+    payloads = []
+    for raw in (data.get("widgetStates") or {}).values():
+        try:
+            payloads.append(json.loads(raw) if isinstance(raw, str) else raw)
+        except (ValueError, TypeError):
+            payloads.append(raw)
+    reqs = seller_requisites(payloads)
+    out["inn"] = reqs.get("inn", "")
+    out["ogrn"] = reqs.get("ogrn", "")
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        for atom in payload.get("body") or []:
+            text = ((atom.get("textAtom") or {}).get("text") or "").strip()
+            if not text:
+                continue
+            out["texts"].append(text)
+            if not out["name"]:
+                out["name"] = _legal_name_from_text(text)
+    return out
 
 
 class OzonAdapter(MarketplaceAdapter):
@@ -295,7 +343,7 @@ class OzonAdapter(MarketplaceAdapter):
             page_number += 1
 
     def fetch_seller(self, ref: str) -> SellerData | None:
-        """Seller page -> sellerTransparency widget (full title) / legacy profile."""
+        """Seller page + shop-in-shop-info modal (popup with ИП/ООО and OGRN/INN)."""
         # Discovery keeps the canonical slug URL (e.g. ``/seller/shop-123/``).
         # Preserve it here; Ozon frequently returns an empty shell for the
         # numeric-only variant.
@@ -311,11 +359,9 @@ class OzonAdapter(MarketplaceAdapter):
         if not data:
             return None
         name = ""
-        # current widget
         st = widget_state(data, "sellerTransparency")
         if st:
             name = ((st.get("title") or {}).get("text") or "").strip()
-        # legacy widget (older layouts)
         info = {}
         layout = data.get("layout") or []
         profile = next((c for c in layout if c.get("component") == "sellerTransparencyProfile"), None)
@@ -324,19 +370,36 @@ class OzonAdapter(MarketplaceAdapter):
                 if ph.get("name") == "onAboutShopInfo":
                     info = ph.get("fields") or {}
                     name = name or (info.get("title") or "")
+
+        # Info-button popup: /modal/shop-in-shop-info?seller_id=...
+        seller_id = (
+            _shop_info_seller_id(st)
+            or _shop_info_seller_id(data.get("widgetStates"))
+            or (SELLER_URL_RE.search(page_path).group(1) if SELLER_URL_RE.search(page_path) else "")
+            or (SLUG_ID_RE.search(page_path.rstrip("/").split("/")[-1] or "").group(1)
+                if SLUG_ID_RE.search(page_path.rstrip("/").split("/")[-1] or "") else "")
+        )
+        modal = _parse_shop_info_modal(
+            self._api_get_stable(f"/modal/shop-in-shop-info?seller_id={seller_id}") if seller_id else None
+        )
+        if modal.get("name"):
+            name = name or modal["name"]
+        reqs = seller_requisites([info, st, modal.get("texts") or [], modal])
         registered = None
         m = DATE_RE.search(str(info.get("registrationDate") or info.get("registeredAt") or ""))
         if m:
             d, mo, y = m.group(0).split(".")
             registered = f"{y}-{mo}-{d}"
+        external_id = seller_id or str(ref_text).rstrip("/").split("/")[-1] or str(ref)
+        seller_url = f"{BASE}{page_path}" if page_path.startswith("/") else f"{BASE}/seller/{ref_text}/"
         return SellerData(
             marketplace=self.code,
-            external_seller_id=str(ref),
-            seller_url=f"{BASE}{page_path}" if page_path.startswith("/") else f"{BASE}/seller/{ref_text}/",
-            name=name,
-            inn=seller_requisites([info, st]).get("inn", ""),
-            ogrn=seller_requisites([info, st]).get("ogrn", ""),
+            external_seller_id=str(external_id),
+            seller_url=seller_url,
+            name=name or modal.get("name") or "",
+            inn=reqs.get("inn", "") or modal.get("inn", ""),
+            ogrn=reqs.get("ogrn", "") or modal.get("ogrn", ""),
             legal_address=info.get("legalAddress") or info.get("address") or "",
             registered_at=registered,
-            raw=info,
+            raw={"profile": info, "shop_info": modal, "seller_id": seller_id},
         )

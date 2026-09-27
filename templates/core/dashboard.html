@@ -1,15 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Новый сбор{% endblock %}
+{% block title %}Новый сбор — Seller Collector{% endblock %}
 {% block content %}
+<div class="page-header text-center">
+  <div class="page-pretitle">Сбор данных</div>
+  <h2 class="page-title">Новый сбор продавцов</h2>
+  <div class="text-secondary mt-1">Выберите маркетплейс, города и категории. Лимит — сколько продавцов из выбранных городов нужно набрать.</div>
+</div>
+
 <div class="row justify-content-center">
-  <div class="col-lg-8">
+  <div class="col-lg-8 col-xl-7">
     <div class="card">
-      <div class="card-header"><h2 class="card-title">Новый сбор продавцов</h2></div>
       <div class="card-body">
         <form method="post" id="collect-form">
           {% csrf_token %}
           <div class="mb-3">
-            <label class="form-label">Маркетплейс</label>
+            <label class="form-label required" for="marketplace">Маркетплейс</label>
             <select name="marketplace" id="marketplace" class="form-select"
                     hx-get="{% url 'selects' %}" hx-target="#selects" hx-trigger="change, load">
               {% for value, label in marketplaces %}
@@ -17,9 +22,20 @@
               {% endfor %}
             </select>
           </div>
-          <div id="selects" hx-get="{% url 'selects' %}" hx-target="this" hx-trigger="load"
+          <div id="selects"
+               hx-get="{% url 'selects' %}"
+               hx-target="this"
+               hx-trigger="load"
                hx-vals='{"marketplace": "ozon"}'></div>
-          <button type="submit" class="btn btn-primary">Начать сбор</button>
+          <div class="mb-3">
+            <label class="form-label required" for="max_sellers">Сколько собрать</label>
+            <input class="form-control" type="number" name="max_sellers" id="max_sellers"
+                   value="50" min="1" max="100000" step="1" required>
+            <small class="form-hint">Сколько продавцов из выбранных городов нужно найти. Сбор идёт, пока лимит не набран.</small>
+          </div>
+          <div class="mt-4">
+            <button type="submit" class="btn btn-primary">Начать сбор</button>
+          </div>
         </form>
       </div>
     </div>

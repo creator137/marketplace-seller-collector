@@ -6,10 +6,11 @@ from django.conf import settings
 from django.utils import timezone
 
 from core.adapters.base import SellerData
-from core.citymatch import find_city_in_address
+from core.citymatch import canonical_city_name, extract_city_from_address, find_city_in_address, normalize_city_name
 from core.dadata import fetch_party, party_to_fields
 from core.models import Category, City, Seller, SellerContact
 from core.phoneutils import is_mobile, normalize_email, normalize_phone, normalize_url
+
 
 log = logging.getLogger("core.services")
 
@@ -81,16 +82,47 @@ def merge_seller_data(seller: Seller, data: SellerData) -> bool:
     return changed
 
 
-def detect_city(seller: Seller) -> None:
+def _resolve_city(name: str | None = None, address: str = "") -> City | None:
+    """Find or create a City from an explicit name and/or free-form address."""
+    preferred = canonical_city_name(name or "")
+    known = list(City.objects.filter(is_active=True).values_list("normalized", "name"))
+    known_norm = [n for n, _ in known]
+
+    matched_norm = None
+    display = preferred
+    if preferred:
+        matched_norm = normalize_city_name(preferred)
+        if matched_norm in known_norm:
+            display = next(title for n, title in known if n == matched_norm)
+    if not matched_norm:
+        matched_norm = find_city_in_address(address, known_norm)
+        if matched_norm:
+            display = next(title for n, title in known if n == matched_norm)
+    if not matched_norm:
+        extracted = extract_city_from_address(address)
+        if extracted:
+            matched_norm = normalize_city_name(extracted)
+            display = extracted
+    if not matched_norm:
+        return None
+
+    existing = City.objects.filter(normalized=matched_norm).first()
+    if existing:
+        return existing
+    return City.objects.create(
+        name=display or canonical_city_name(matched_norm),
+        normalized=matched_norm,
+        is_active=True,
+    )
+
+
+def detect_city(seller: Seller, preferred_name: str | None = None) -> None:
+    """Fill seller.city from DaData hint and/or legal address; create City if needed."""
     if seller.city_id:
         return
-    address = seller.legal_address
-    if not address:
-        return
-    cities = list(City.objects.filter(is_active=True).values_list("normalized", flat=True))
-    matched = find_city_in_address(address, cities)
-    if matched:
-        seller.city = City.objects.filter(normalized=matched).first()
+    city = _resolve_city(preferred_name, seller.legal_address or "")
+    if city:
+        seller.city = city
 
 
 def upsert_seller(data: SellerData) -> Seller:
@@ -123,16 +155,17 @@ def upsert_seller(data: SellerData) -> Seller:
 
 
 def enrich_with_dadata(seller: Seller, force=False) -> bool:
-    """Enrich one seller via DaData by INN. Returns True if something was added."""
+    """Enrich one seller via DaData by INN or OGRN/OGRNIP. Returns True if added."""
     if not settings.DADATA_TOKEN:
         return False
     if not force and seller.last_enriched_at:
         ttl = timedelta(days=settings.DADATA_TTL_DAYS)
         if timezone.now() - seller.last_enriched_at < ttl:
             return False
-    if not seller.inn:
+    query = (seller.inn or seller.ogrn or "").strip()
+    if not query:
         return False
-    party = fetch_party(seller.inn)
+    party = fetch_party(query)
     seller.last_enriched_at = timezone.now()
     if not party:
         seller.save(update_fields=["last_enriched_at"])
@@ -140,10 +173,13 @@ def enrich_with_dadata(seller: Seller, force=False) -> bool:
     fields = party_to_fields(party)
     changed = False
     _update_field(seller, "name", fields["name"])
+    _update_field(seller, "inn", fields["inn"])
     _update_field(seller, "ogrn", fields["ogrn"])
     _update_field(seller, "legal_address", fields["legal_address"])
     _update_field(seller, "website", normalize_url(fields.get("website") or ""))
     if fields["legal_address"] and not seller.legal_address:
+        changed = True
+    if fields["inn"] and not seller.inn:
         changed = True
     if fields["ogrn"] and not seller.ogrn:
         changed = True
@@ -153,6 +189,6 @@ def enrich_with_dadata(seller: Seller, force=False) -> bool:
         changed |= _merge_contact(seller, "email", email, SellerContact.SOURCE_DADATA, "dadata")
     if fields["website"]:
         changed |= _merge_contact(seller, "site", fields["website"], SellerContact.SOURCE_DADATA, "dadata")
-    detect_city(seller)
+    detect_city(seller, preferred_name=fields.get("city") or "")
     seller.save()
     return changed

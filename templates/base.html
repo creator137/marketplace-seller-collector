@@ -4,9 +4,71 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Seller Collector{% endblock %}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta17/dist/css/tabler.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <style>
+    :root {
+      --tblr-primary: #206bc4;
+      --sc-sidebar: #1b2430;
+      --sc-sidebar-muted: #8b98a8;
+    }
+    body { background: #f4f6f9; }
+    .page { min-height: 100vh; }
+    .navbar-vertical {
+      background: var(--sc-sidebar) !important;
+      border: 0 !important;
+    }
+    .navbar-vertical .navbar-brand,
+    .navbar-vertical .nav-link {
+      color: #e8eef5 !important;
+    }
+    .navbar-vertical .nav-link:hover,
+    .navbar-vertical .nav-link.active {
+      background: rgba(255, 255, 255, .08);
+      color: #fff !important;
+    }
+    .navbar-vertical .nav-link-title { font-weight: 500; }
+    .navbar-vertical .navbar-brand-text {
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: .01em;
+    }
+    .navbar-vertical .sidebar-meta {
+      color: var(--sc-sidebar-muted);
+      font-size: .8rem;
+      padding: .75rem 1.25rem 1rem;
+    }
+    .page-wrapper { background: #f4f6f9; }
+    .page-body .container-xl#content,
+    #content.container-xl {
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .page-header { margin-bottom: 2rem; padding-bottom: .25rem; text-align: center; }
+    .page-header .page-pretitle,
+    .page-header .text-secondary { text-align: center; }
+    .page-header .text-secondary { max-width: 40rem; margin-left: auto; margin-right: auto; }
+    /* Tabler sets .page-title { display:flex }, so text-align alone does nothing */
+    .page-header .page-title {
+      display: flex;
+      justify-content: center;
+      width: 100%;
+      text-align: center;
+    }
+    .page-header.d-flex { text-align: left; }
+    .page-header.d-flex .page-pretitle,
+    .page-header.d-flex .text-secondary { text-align: left; }
+    .page-header.d-flex .page-title {
+      justify-content: flex-start;
+      width: auto;
+      text-align: left;
+    }
+    .page-pretitle { color: #6b7785; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+    .page-title { font-weight: 650; letter-spacing: -.01em; }
+    .card { border: 0; box-shadow: 0 1px 2px rgba(24, 39, 75, .04), 0 4px 16px rgba(24, 39, 75, .04); }
+    .card-header { background: transparent; }
+    .form-select[multiple] { min-height: 9rem; }
     .progress-bar-indeterminate {
       animation: collection-progress 1.4s ease-in-out infinite;
       transform-origin: left center;
@@ -16,30 +78,96 @@
       50% { transform: scaleX(.65); opacity: 1; }
       100% { transform: scaleX(.08); opacity: .55; }
     }
+    .auth-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      background:
+        radial-gradient(circle at top right, rgba(32, 107, 196, .12), transparent 40%),
+        linear-gradient(180deg, #eef3f9, #f7f8fa);
+    }
+    .logout-link {
+      color: var(--sc-sidebar-muted) !important;
+      font-size: .85rem;
+      padding: .35rem 1.25rem 1rem !important;
+    }
+    .logout-link:hover { color: #fff !important; background: transparent !important; }
   </style>
+  {% block extra_head %}{% endblock %}
 </head>
-<body class="theme-light">
+<body class="{% block body_class %}{% endblock %}">
+{% if user.is_authenticated %}
 <div class="page">
-  <header class="navbar navbar-expand-md d-print-none">
-    <div class="container-xl">
-      <h1 class="navbar-brand mb-0"><a href="{% url 'dashboard' %}">Seller Collector</a></h1>
-      <div class="navbar-nav flex-row order-md-last">
-        <a class="nav-link" href="{% url 'dashboard' %}">Сбор</a>
-        <a class="nav-link" href="{% url 'jobs' %}">История</a>
-        <a class="nav-link" href="{% url 'results' %}">Продавцы</a>
-        <a class="nav-link" href="/admin/">Admin</a>
-        <form method="post" action="{% url 'logout' %}" class="ms-2">{% csrf_token %}
-          <button class="btn btn-sm btn-outline-secondary" type="submit">Выйти</button>
-        </form>
+  <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+    <div class="container-fluid">
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu"
+              aria-controls="sidebar-menu" aria-expanded="false" aria-label="Меню">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <h1 class="navbar-brand navbar-brand-autodark">
+        <a href="{% url 'dashboard' %}" class="navbar-brand-text">Seller Collector</a>
+      </h1>
+      <div class="collapse navbar-collapse d-lg-flex flex-column" id="sidebar-menu">
+        <ul class="navbar-nav pt-lg-2 flex-grow-1">
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
+               href="{% url 'dashboard' %}">
+              <span class="nav-link-title">Новый сбор</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'jobs' or request.resolver_match.url_name == 'job_detail' %}active{% endif %}"
+               href="{% url 'jobs' %}">
+              <span class="nav-link-title">История</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'results' %}active{% endif %}"
+               href="{% url 'results' %}">
+              <span class="nav-link-title">Продавцы</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'catalogs' %}active{% endif %}"
+               href="{% url 'catalogs' %}">
+              <span class="nav-link-title">Справочники</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'how_it_works' %}active{% endif %}"
+               href="{% url 'how_it_works' %}">
+              <span class="nav-link-title">Как это работает</span>
+            </a>
+          </li>
+          {% if user.is_staff %}
+          <li class="nav-item">
+            <a class="nav-link" href="/admin/">
+              <span class="nav-link-title">Admin</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+        <div class="mt-auto w-100">
+          <div class="sidebar-meta">
+            {{ user.get_username }}
+          </div>
+          <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+            <button class="nav-link logout-link border-0 bg-transparent w-100 text-start" type="submit">
+              Выйти
+            </button>
+          </form>
+        </div>
       </div>
     </div>
-  </header>
+  </aside>
   <div class="page-wrapper">
     <div class="page-body">
-      <div class="container-xl">
+      <div class="container-xl py-4" id="content">
         {% if messages %}
           {% for message in messages %}
-            <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+            <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible" role="alert">
+              {{ message }}
+            </div>
           {% endfor %}
         {% endif %}
         {% block content %}{% endblock %}
@@ -47,5 +175,9 @@
     </div>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js"></script>
+{% else %}
+  {% block unauth_content %}{% endblock %}
+{% endif %}
 </body>
 </html>

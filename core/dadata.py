@@ -1,5 +1,6 @@
 """DaData enrichment: the only allowed external enrichment source (by INN)."""
 import logging
+import re
 
 from django.conf import settings
 
@@ -10,10 +11,11 @@ log = logging.getLogger("core.dadata")
 URL = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
 
 
-def fetch_party(inn: str) -> dict | None:
-    """Return the first DaData party suggestion for an INN, or None (normal result)."""
+def fetch_party(query: str) -> dict | None:
+    """Return the first DaData party suggestion for INN/OGRN/OGRNIP, or None."""
     token = settings.DADATA_TOKEN
-    if not token or not inn:
+    query = (query or "").strip()
+    if not token or not query:
         return None
     headers = {
         "Authorization": f"Token {token}",
@@ -24,9 +26,9 @@ def fetch_party(inn: str) -> dict | None:
         headers["X-Secret"] = settings.DADATA_SECRET
     client = HttpClient(headers=headers)
     try:
-        resp = client.request("POST", URL, json_payload={"query": inn, "count": 1})
+        resp = client.request("POST", URL, json_payload={"query": query, "count": 1})
     except HttpError as exc:
-        log.warning("DaData request failed for INN %s: %s", inn, exc)
+        log.warning("DaData request failed for %s: %s", query, exc)
         return None
     try:
         data = resp.json()
@@ -47,9 +49,21 @@ def party_to_fields(party: dict) -> dict:
     # from arbitrary payload keys; website can still come from the marketplace.
     website = ""
     doc = data.get("management") or {}
+    address = data.get("address") or {}
+    addr_data = address.get("data") or {}
+    city = (
+        addr_data.get("city")
+        or addr_data.get("settlement")
+        or addr_data.get("city_with_type")
+        or addr_data.get("settlement_with_type")
+        or ""
+    )
+    if isinstance(city, str) and city.lower().startswith(("г ", "г.", "город ")):
+        city = re.sub(r"^(?:г\.?\s*|город\s+)", "", city, flags=re.I).strip()
     return {
         "name": party.get("value") or party.get("unrestricted_value") or "",
-        "legal_address": ((data.get("address") or {}).get("value") or ""),
+        "legal_address": (address.get("value") or ""),
+        "city": city.strip(),
         "inn": str(data.get("inn") or ""),
         "ogrn": str(data.get("ogrn") or ""),
         "mobile_phones": phones,
