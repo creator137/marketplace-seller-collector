@@ -2,6 +2,14 @@
 set -eu
 
 mkdir -p /app/runtime/browser-profile /app/runtime/sessions
+# Container hostnames change on recreation. Chromium leaves these symlinks in
+# the persistent profile even after a clean container stop.
+for lock in SingletonCookie SingletonLock SingletonSocket; do
+    path="/app/runtime/browser-profile/$lock"
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        rm -f "$path"
+    fi
+done
 password_file=/app/runtime/vnc_password
 if [ ! -s "$password_file" ]; then
     python -c 'import secrets; print(secrets.token_hex(8))' > "$password_file"
