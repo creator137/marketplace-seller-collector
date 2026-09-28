@@ -261,8 +261,6 @@ def catalogs(request):
                 session.delete()
                 from pathlib import Path
 
-                from django.conf import settings
-
                 path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
                 if path.exists():
                     path.unlink()

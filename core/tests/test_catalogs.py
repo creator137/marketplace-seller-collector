@@ -143,6 +143,20 @@ class CatalogsViewsTest(TestCase):
         self.assertEqual(response.status_code, 302)
         save.assert_called_once_with(Marketplace.OZON)
 
+    def test_browser_open_redirects_to_protected_novnc(self):
+        from unittest.mock import patch
+
+        with patch("core.browser_session.open_marketplace", return_value="https://www.ozon.ru/"), patch(
+            "core.browser_session.vnc_password", return_value="secret123",
+        ):
+            response = self.client.post("/catalogs/?section=sessions", {
+                "action": "browser_open",
+                "marketplace": Marketplace.OZON,
+            })
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(":6080/vnc.html", response.url)
+        self.assertIn("password=secret123", response.url)
+
     def test_requires_login(self):
         self.client.logout()
         self.assertEqual(self.client.get("/catalogs/").status_code, 302)
