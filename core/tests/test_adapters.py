@@ -248,9 +248,17 @@ class WildberriesParsingTest(TestCase):
     def test_browser_device_id_is_sent(self, client_cls):
         client_cls.marketplace_session.return_value = {
             "local_storage": {"wbx__sessionID": "site_test-device"},
+            "browser": {
+                "user_agent": "Browser Test/154",
+                "brands": [{"brand": "Chromium", "version": "154"}],
+                "mobile": False,
+                "platform": "Linux",
+            },
         }
         from core.adapters.wildberries import WildberriesAdapter
 
         WildberriesAdapter()
 
         self.assertEqual(client_cls.call_args.kwargs["headers"]["deviceid"], "site_test-device")
+        self.assertEqual(client_cls.call_args.kwargs["headers"]["user-agent"], "Browser Test/154")
+        self.assertEqual(client_cls.call_args.kwargs["headers"]["sec-ch-ua"], '"Chromium";v="154"')

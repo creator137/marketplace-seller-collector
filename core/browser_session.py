@@ -73,8 +73,18 @@ def save_marketplace_cookies(marketplace):
             context.pages[0] if context.pages else None,
         )
         local_storage = {}
+        browser_fingerprint = {}
         if page is not None:
             try:
+                browser_fingerprint = page.evaluate("""() => {
+                    const data = navigator.userAgentData;
+                    return {
+                        user_agent: navigator.userAgent || '',
+                        brands: data ? data.brands : [],
+                        mobile: data ? data.mobile : false,
+                        platform: data ? data.platform : navigator.platform,
+                    };
+                }""")
                 if marketplace == "wildberries":
                     device_id = page.evaluate("localStorage.getItem('wbx__sessionID') || ''")
                     if device_id:
@@ -110,6 +120,7 @@ def save_marketplace_cookies(marketplace):
         # WB validates a per-browser device identifier in addition to cookies.
         # Store only the marketplace's own browser state; never the full profile.
         "local_storage": local_storage,
+        "browser": browser_fingerprint,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
     return len(cookies)

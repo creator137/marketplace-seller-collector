@@ -33,7 +33,7 @@ BASE_HEADERS = {
     "x-requested-with": "XMLHttpRequest",
 }
 
-DEFAULT_DEST = "-1257786"
+DEFAULT_DEST = "1259570991"
 
 
 class WildberriesAdapter(MarketplaceAdapter):
@@ -44,10 +44,21 @@ class WildberriesAdapter(MarketplaceAdapter):
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
         runtime_session = HttpClient.marketplace_session("wildberries")
         local_storage = runtime_session.get("local_storage") or {}
+        browser = runtime_session.get("browser") or {}
         self.device_id = str(local_storage.get("wbx__sessionID") or "").strip()
         headers = dict(BASE_HEADERS)
         if self.device_id:
             headers["deviceid"] = self.device_id
+        if browser.get("user_agent"):
+            headers["user-agent"] = str(browser["user_agent"])
+        brands = browser.get("brands") or []
+        if brands:
+            headers["sec-ch-ua"] = ", ".join(
+                f'"{item.get("brand", "")}";v="{item.get("version", "")}"'
+                for item in brands if isinstance(item, dict)
+            )
+            headers["sec-ch-ua-mobile"] = "?1" if browser.get("mobile") else "?0"
+            headers["sec-ch-ua-platform"] = f'"{browser.get("platform", "")}"'
         self.client = HttpClient(
             cookies=HttpClient.marketplace_cookies("wildberries", settings.WB_COOKIES),
             headers=headers,
