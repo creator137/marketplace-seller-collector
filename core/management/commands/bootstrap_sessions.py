@@ -24,6 +24,10 @@ class Command(BaseCommand):
         parser.add_argument("--query", default="наушники", help="Search text used for the normal page")
         parser.add_argument("--headless", action="store_true", help="Use headless Chromium (not suitable for manual captcha)")
         parser.add_argument("--timeout", type=int, default=120, help="Page timeout in seconds")
+        parser.add_argument(
+            "--wait-seconds", type=int, default=0,
+            help="In headed mode wait this long instead of reading Enter from the terminal",
+        )
 
     def handle(self, *args, **options):
         try:
@@ -49,10 +53,16 @@ class Command(BaseCommand):
                     context = browser.new_context(locale="ru-RU")
                     page = context.new_page()
                     response = page.goto(url, wait_until="domcontentloaded", timeout=options["timeout"] * 1000)
-                    if response and response.status in (403, 406, 429, 451, 498):
+                    if options["headless"] and response and response.status in (403, 406, 429, 451, 498):
                         raise CommandError(f"Marketplace returned HTTP {response.status}; сессия не сохранена.")
                     if not options["headless"]:
-                        input("После открытия обычной страницы нажмите Enter здесь: ")
+                        if options["wait_seconds"]:
+                            self.stdout.write(
+                                f"Ожидаю ручную проверку {options['wait_seconds']} секунд..."
+                            )
+                            page.wait_for_timeout(options["wait_seconds"] * 1000)
+                        else:
+                            input("После открытия обычной страницы нажмите Enter здесь: ")
                     else:
                         page.wait_for_timeout(3000)
                     body = page.locator("body").inner_text(timeout=5000).lower()
