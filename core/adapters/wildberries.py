@@ -86,7 +86,7 @@ class WildberriesAdapter(MarketplaceAdapter):
         shard, _, query = (category.external_id or "").partition("|")
         query = query or category.external_id
         params = {
-            "ab_daily_autotest": "test_group39", "appType": "1",
+            "ab_testing": "false", "appType": "1",
             "curr": "rub", "dest": self._dest(city),
             "hide_dflags": "1048576", "hide_vflags": "4294967296",
             "inheritFilters": "true", "lang": "ru", "locale": "ru",
