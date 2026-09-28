@@ -80,6 +80,16 @@ class HttpClient:
         return out
 
     @staticmethod
+    def marketplace_session(marketplace: str) -> dict:
+        """Load browser bootstrap state from ignored runtime storage."""
+        path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return {}
+
+    @staticmethod
     def marketplace_cookies(marketplace: str, raw: str = "") -> dict:
         """Merge configured Cookie header with an optional browser session.
 
@@ -89,18 +99,12 @@ class HttpClient:
         deterministic without changing adapter code.
         """
         cookies = HttpClient.parse_cookies(raw)
-        path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            items = payload.get("cookies", []) if isinstance(payload, dict) else payload
-            if isinstance(items, list):
-                for item in items:
-                    if isinstance(item, dict) and item.get("name") and item.get("value") is not None:
-                        cookies[str(item["name"])] = str(item["value"])
-        except (FileNotFoundError, OSError, ValueError, TypeError):
-            # A missing/stale runtime session is diagnosed by the marketplace
-            # response; it must not prevent the adapter from starting.
-            pass
+        payload = HttpClient.marketplace_session(marketplace)
+        items = payload.get("cookies", [])
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("name") and item.get("value") is not None:
+                    cookies[str(item["name"])] = str(item["value"])
         return cookies
 
     def get(self, url, params=None, headers=None, timeout=None):

@@ -239,3 +239,18 @@ class WildberriesParsingTest(TestCase):
         cat = Category(marketplace=Marketplace.WB, external_id="noski|носки", title="Носки")
         sellers = WildberriesAdapter().discover_sellers(cat, max_sellers=10)
         self.assertEqual([s.external_seller_id for s in sellers], ["555001", "555002", "555003"])
+        calls = client_cls.return_value.get.call_args_list
+        self.assertIn("/common/v18/search", calls[0].args[0])
+        self.assertNotIn("page", calls[0].kwargs["params"])
+        self.assertEqual(calls[1].kwargs["params"]["page"], "2")
+
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_browser_device_id_is_sent(self, client_cls):
+        client_cls.marketplace_session.return_value = {
+            "local_storage": {"wbx__sessionID": "site_test-device"},
+        }
+        from core.adapters.wildberries import WildberriesAdapter
+
+        WildberriesAdapter()
+
+        self.assertEqual(client_cls.call_args.kwargs["headers"]["deviceid"], "site_test-device")

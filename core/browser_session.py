@@ -68,6 +68,19 @@ def save_marketplace_cookies(marketplace):
         if context is None:
             raise RuntimeError("Chromium context is not available")
         cookies = context.cookies([URLS[marketplace]])
+        page = next(
+            (item for item in context.pages if marketplace_host(marketplace) in item.url),
+            context.pages[0] if context.pages else None,
+        )
+        local_storage = {}
+        if page is not None:
+            try:
+                if marketplace == "wildberries":
+                    device_id = page.evaluate("localStorage.getItem('wbx__sessionID') || ''")
+                    if device_id:
+                        local_storage["wbx__sessionID"] = device_id
+            except Exception:
+                local_storage = {}
     finally:
         playwright.stop()
     if not cookies:
@@ -94,9 +107,16 @@ def save_marketplace_cookies(marketplace):
         "source": "browser-ui",
         "url": URLS[marketplace],
         "cookies": cookies,
+        # WB validates a per-browser device identifier in addition to cookies.
+        # Store only the marketplace's own browser state; never the full profile.
+        "local_storage": local_storage,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
     return len(cookies)
+
+
+def marketplace_host(marketplace):
+    return urlparse(URLS[marketplace]).hostname or ""
 
 
 def vnc_password():

@@ -1,4 +1,4 @@
-"""Wildberries adapter: public JSON endpoints (search.wb.ru, card.wb.ru, sellers.wb.ru).
+"""Wildberries adapter: current storefront JSON and supplier endpoints.
 
 Live status 2026-09: search/card endpoints return 403/498 without valid session
 cookies (x_wbaas_token etc.). Provide WB_COOKIES env for live collection.
@@ -15,7 +15,7 @@ from core.httpclient import HttpClient
 
 log = logging.getLogger("core.adapters.wb")
 
-SEARCH_URL = "https://search.wb.ru/exactmatch/ru/common/v5/search"
+SEARCH_URL = "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search"
 CARD_URL = "https://card.wb.ru/cards/v2/detail"
 SELLER_CARD_URL = "https://sellers.wb.ru/sellers/v1/supplier/{id}/card-info"
 SELLER_STATIC_URL = "https://static-basket-01.wbbasket.ru/vol0/data/supplier-by-id/{id}.json"
@@ -23,8 +23,11 @@ MENU_URL = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.js
 
 BASE_HEADERS = {
     "accept": "*/*",
-    "origin": "https://www.wildberries.ru",
     "referer": "https://www.wildberries.ru/",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "x-requested-with": "XMLHttpRequest",
 }
 
 DEFAULT_DEST = "-1257786"
@@ -36,9 +39,15 @@ class WildberriesAdapter(MarketplaceAdapter):
     def __init__(self):
         self.last_page = 0
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
+        runtime_session = HttpClient.marketplace_session("wildberries")
+        local_storage = runtime_session.get("local_storage") or {}
+        self.device_id = str(local_storage.get("wbx__sessionID") or "").strip()
+        headers = dict(BASE_HEADERS)
+        if self.device_id:
+            headers["deviceid"] = self.device_id
         self.client = HttpClient(
             cookies=HttpClient.marketplace_cookies("wildberries", settings.WB_COOKIES),
-            headers=BASE_HEADERS,
+            headers=headers,
         )
 
     def _dest(self, city=None) -> str:
@@ -75,18 +84,24 @@ class WildberriesAdapter(MarketplaceAdapter):
         query = query or category.external_id
         params = {
             "appType": "1", "curr": "rub", "dest": self._dest(city),
-            "query": query, "resultset": "catalog", "page": str(start_page or 1),
-            "sort": "popular", "spp": "30", "suppressSpellcheck": "false",
+            "hide_dflags": "1048576", "hide_vflags": "4294967296",
+            "inheritFilters": "true", "lang": "ru", "locale": "ru",
+            "query": query, "resultset": "catalog", "sort": "popular",
+            "spp": "30", "suppressSpellcheck": "false",
         }
         found = set()
         seen_products = set()
         page = max(1, int(start_cursor or start_page or 1))
         total_found = 0
         while True:
-            params["page"] = str(page)
+            # The storefront omits page=1 and adds it only for subsequent pages.
+            if page > 1:
+                params["page"] = str(page)
+            else:
+                params.pop("page", None)
             self.last_page = page
             try:
-                resp = self.client.get(SEARCH_URL, params=params)
+                resp = self.client.get(SEARCH_URL, params=dict(params))
                 data = resp.json()
             except ValueError as exc:
                 body = str(getattr(resp, "text", ""))
