@@ -1,6 +1,7 @@
 services:
   web:
     build: .
+    image: marketplace-seller-collector:latest
     ports:
       - "8000:8000"
     env_file: .env
@@ -15,13 +16,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    restart: unless-stopped
     command: >
       sh -c "python manage.py migrate &&
              python manage.py collectstatic --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2"
 
   worker:
-    build: .
+    image: marketplace-seller-collector:latest
     env_file: .env
     environment:
       DATABASE_URL: postgresql://seller:seller@postgres:5432/seller
@@ -34,7 +36,25 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    restart: unless-stopped
     command: python manage.py rqworker default
+
+  scheduler:
+    image: marketplace-seller-collector:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://seller:seller@postgres:5432/seller
+      REDIS_URL: redis://redis:6379/0
+      RQ_ASYNC: "1"
+    volumes:
+      - ./runtime/sessions:/app/runtime/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    command: python manage.py auto_collect --loop
 
   postgres:
     image: postgres:16-alpine
@@ -49,9 +69,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
 
 volumes:
   pgdata:

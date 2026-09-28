@@ -1,5 +1,25 @@
 # Mass collection status
 
+## Server deployment — 2026-09-28
+
+Server IP `2.56.241.55`, headless Chromium bootstrap and HTTP endurance were
+executed from the deployed Docker environment (not fixtures):
+
+- Ozon: bootstrap HTTP 403; entrypoint and composer discovery HTTP 403,
+  0 sellers, 3 requests, 31.14s. Existing supplied cookies are no longer valid.
+- Wildberries: bootstrap HTTP 498; discovery HTTP 403 on page 1,
+  0 sellers. No valid WB session is configured.
+- Yandex Market: bootstrap HTTP 403; HTTP discovery returns a protection page,
+  0 sellers. No valid Yandex session is configured.
+- WB geo endpoint returned HTTP 200 for Уфа, Челябинск and Екатеринбург;
+  the corresponding real delivery `dest` values were resolved for deployment.
+
+The server correctly pauses these runs as `blocked`; it does not report a false
+successful empty result. A successful 100+ server crawl cannot be claimed until
+a normal-browser session accepted from this server/IP is supplied. Earlier
+successful live results below were obtained from the development host and remain
+valid only for that environment/session.
+
 Real live runs from this machine (host venv, macOS, real network). Every number
 below comes from an actual crawl executed on 2026-09-24; nothing is inferred
 from fixtures.
