@@ -41,11 +41,19 @@ def _connect():
 
 
 def open_marketplace(marketplace):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
     playwright, browser = _connect()
     try:
         context = browser.contexts[0] if browser.contexts else browser.new_context(locale="ru-RU")
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto(URLS[marketplace], wait_until="domcontentloaded", timeout=60000)
+        try:
+            # The user completes verification in noVNC. The HTTP request only
+            # needs navigation to start; it must never occupy a web worker for
+            # a full marketplace page load.
+            page.goto(URLS[marketplace], wait_until="commit", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
         page.bring_to_front()
         return page.url
     finally:
