@@ -130,6 +130,10 @@ class Command(BaseCommand):
         parser.add_argument("--target", type=int, default=int(os.getenv("AUTO_COLLECT_TARGET", "5000")))
         parser.add_argument("--username", default=os.getenv("AUTO_COLLECT_USERNAME", "admin"))
         parser.add_argument(
+            "--allow-small-catalog", action="store_true",
+            help="Schedule even before the full catalog sync has completed",
+        )
+        parser.add_argument(
             "--marketplace", action="append", choices=Marketplace.values,
             help="Marketplace to schedule; repeat the option. Default: all.",
         )
@@ -143,12 +147,25 @@ class Command(BaseCommand):
         while True:
             close_old_connections()
             try:
-                events = schedule_once(
-                    marketplaces=marketplaces,
-                    target=options["target"],
-                    interval=options["interval"],
-                    username=options["username"],
+                category_counts = {
+                    code: Category.objects.filter(marketplace=code, is_active=True).count()
+                    for code in marketplaces
+                }
+                catalog_ready = City.objects.filter(is_active=True).count() >= 100 and all(
+                    count >= 100 for count in category_counts.values()
                 )
+                if not catalog_ready and not options["allow_small_catalog"]:
+                    events = [
+                        "catalog sync is not ready; waiting "
+                        f"(cities={City.objects.filter(is_active=True).count()}, categories={category_counts})"
+                    ]
+                else:
+                    events = schedule_once(
+                        marketplaces=marketplaces,
+                        target=options["target"],
+                        interval=options["interval"],
+                        username=options["username"],
+                    )
                 for event in events:
                     self.stdout.write(f"{timezone.now():%Y-%m-%d %H:%M:%S} {event}")
             except Exception as exc:

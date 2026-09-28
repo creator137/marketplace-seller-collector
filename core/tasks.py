@@ -57,7 +57,26 @@ def _adapter_page(adapter):
 def _search_cities(job, cities):
     # Marketplace city selection is a WB delivery destination only. Ozon and
     # Yandex discovery is global; legal city is resolved after details.
-    return cities if job.marketplace == "wildberries" else [None]
+    if job.marketplace != "wildberries":
+        return [None]
+    # Selecting the whole Russian city catalog must not multiply every WB
+    # category by 1,000+ delivery locations. Discovery is global in that case;
+    # legal city matching still happens after seller details.
+    if len(cities) > 20:
+        return [None]
+    result = []
+    seen_dest = set()
+    has_global = False
+    for city in cities:
+        dest = (city.dest_code or "").strip()
+        if not dest:
+            has_global = True
+        elif dest not in seen_dest:
+            seen_dest.add(dest)
+            result.append(city)
+    if has_global or not result:
+        result.append(None)
+    return result
 
 
 def _discovery_key(job, category, city):

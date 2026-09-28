@@ -1,6 +1,7 @@
 <div class="mb-3">
   <label class="form-label required" for="cities">Города</label>
   <select name="cities" id="cities" class="form-select" multiple size="4" required>
+    <option value="__all__">Все города</option>
     {% for city in cities %}
       <option value="{{ city.id }}">{{ city.name }}</option>
     {% endfor %}
@@ -10,6 +11,7 @@
 <div class="mb-3">
   <label class="form-label required" for="categories">Категории</label>
   <select name="categories" id="categories" class="form-select" multiple size="8" required>
+    <option value="__all__">Все категории</option>
     {% for cat in categories %}
       <option value="{{ cat.id }}">{{ cat.title }}</option>
     {% empty %}

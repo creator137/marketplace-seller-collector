@@ -127,6 +127,26 @@ class ViewsTest(TestCase):
         self.assertEqual(job.max_sellers, 42)
         self.assertEqual(job.total, 42)
 
+    def test_start_job_all_options_expand_active_catalogs(self):
+        Category.objects.create(marketplace=Marketplace.OZON, external_id="all-a", title="A")
+        Category.objects.create(marketplace=Marketplace.OZON, external_id="all-b", title="B")
+        City.objects.get_or_create(name="Казань")
+        with patch("core.views._rq_queue") as queue:
+            r = self.client.post("/", {
+                "marketplace": Marketplace.OZON,
+                "categories": ["__all__"],
+                "cities": ["__all__"],
+                "max_sellers": "10",
+            })
+        self.assertEqual(r.status_code, 302)
+        job = CollectionJob.objects.get()
+        self.assertEqual(
+            job.categories.count(),
+            Category.objects.filter(marketplace=Marketplace.OZON, is_active=True).count(),
+        )
+        self.assertEqual(job.cities.count(), City.objects.filter(is_active=True).count())
+        queue.return_value.enqueue.assert_called_once()
+
     def test_results_by_job_show_only_selected_cities(self):
         """Job results list sellers that match the selected cities."""
         from core.models import CollectionJobSeller

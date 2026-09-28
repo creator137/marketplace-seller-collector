@@ -56,6 +56,18 @@ services:
     restart: unless-stopped
     command: python manage.py auto_collect --loop
 
+  catalog-sync:
+    image: marketplace-seller-collector:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://seller:seller@postgres:5432/seller
+      CATALOG_SYNC_INTERVAL: "86400"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    command: python manage.py sync_catalogs --loop
+
   postgres:
     image: postgres:16-alpine
     environment:

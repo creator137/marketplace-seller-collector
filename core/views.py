@@ -68,8 +68,14 @@ def dashboard(request):
             max_sellers=max_sellers,
             total=max_sellers,
         )
-        job.cities.set(City.objects.filter(id__in=city_ids))
-        job.categories.set(Category.objects.filter(id__in=category_ids, marketplace=marketplace))
+        cities = City.objects.filter(is_active=True) if "__all__" in city_ids else City.objects.filter(id__in=city_ids, is_active=True)
+        categories = (
+            Category.objects.filter(is_active=True, marketplace=marketplace)
+            if "__all__" in category_ids
+            else Category.objects.filter(id__in=category_ids, marketplace=marketplace, is_active=True)
+        )
+        job.cities.set(cities)
+        job.categories.set(categories)
         try:
             _rq_queue().enqueue(run_collection_job, job.id)
         except Exception as exc:
