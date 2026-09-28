@@ -17,6 +17,39 @@ URLS = {
     "yandex_market": "https://market.yandex.ru/search?text=наушники",
 }
 
+WB_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
+
+
+def _configure_wildberries_browser(context, page):
+    """Align bootstrap identity with curl_cffi's newest Chrome profile."""
+    session = context.new_cdp_session(page)
+    session.send("Network.setUserAgentOverride", {
+        "userAgent": WB_USER_AGENT,
+        "acceptLanguage": "en-US,en;q=0.9",
+        "platform": "Win32",
+        "userAgentMetadata": {
+            "brands": [
+                {"brand": "Not A(Brand", "version": "99"},
+                {"brand": "Chromium", "version": "150"},
+            ],
+            "fullVersionList": [
+                {"brand": "Not A(Brand", "version": "99.0.0.0"},
+                {"brand": "Chromium", "version": "150.0.0.0"},
+            ],
+            "fullVersion": "150.0.0.0",
+            "platform": "Windows",
+            "platformVersion": "10.0.0",
+            "architecture": "x86",
+            "model": "",
+            "mobile": False,
+            "bitness": "64",
+            "wow64": False,
+        },
+    })
+
 
 def _connect():
     from playwright.sync_api import sync_playwright
@@ -47,6 +80,8 @@ def open_marketplace(marketplace):
     try:
         context = browser.contexts[0] if browser.contexts else browser.new_context(locale="ru-RU")
         page = context.pages[0] if context.pages else context.new_page()
+        if marketplace == "wildberries":
+            _configure_wildberries_browser(context, page)
         try:
             # The user completes verification in noVNC. The HTTP request only
             # needs navigation to start; it must never occupy a web worker for
@@ -75,6 +110,8 @@ def save_marketplace_cookies(marketplace):
         local_storage = {}
         browser_fingerprint = {}
         if page is not None:
+            if marketplace == "wildberries" and "Chrome/150." not in page.evaluate("navigator.userAgent"):
+                raise RuntimeError("Сначала откройте Wildberries кнопкой «Открыть Chromium»")
             try:
                 browser_fingerprint = page.evaluate("""() => {
                     const data = navigator.userAgentData;

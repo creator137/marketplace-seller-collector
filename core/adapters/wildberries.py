@@ -34,6 +34,7 @@ BASE_HEADERS = {
 }
 
 DEFAULT_DEST = "1259570991"
+WB_IMPERSONATE = "chrome150"
 
 
 class WildberriesAdapter(MarketplaceAdapter):
@@ -62,6 +63,7 @@ class WildberriesAdapter(MarketplaceAdapter):
         self.client = HttpClient(
             cookies=HttpClient.marketplace_cookies("wildberries", settings.WB_COOKIES),
             headers=headers,
+            impersonate=WB_IMPERSONATE,
         )
 
     def _dest(self, city=None) -> str:

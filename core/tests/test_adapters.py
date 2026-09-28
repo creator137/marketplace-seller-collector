@@ -262,3 +262,4 @@ class WildberriesParsingTest(TestCase):
         self.assertEqual(client_cls.call_args.kwargs["headers"]["deviceid"], "site_test-device")
         self.assertEqual(client_cls.call_args.kwargs["headers"]["user-agent"], "Browser Test/154")
         self.assertEqual(client_cls.call_args.kwargs["headers"]["sec-ch-ua"], '"Chromium";v="154"')
+        self.assertEqual(client_cls.call_args.kwargs["impersonate"], "chrome150")
