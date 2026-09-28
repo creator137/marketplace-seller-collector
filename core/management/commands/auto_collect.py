@@ -1,4 +1,5 @@
 """Schedule recurring collection jobs without duplicating active work."""
+import json
 import os
 import time
 from datetime import datetime, timezone as datetime_timezone
@@ -17,15 +18,16 @@ from core.tasks import run_collection_job
 
 def _session_updated_at(marketplace):
     values = []
-    db_value = MarketplaceSession.objects.filter(
-        marketplace=marketplace,
-    ).values_list("updated_at", flat=True).first()
-    if db_value:
-        values.append(db_value)
+    db_session = MarketplaceSession.objects.filter(marketplace=marketplace).first()
+    if db_session and db_session.parsed_cookies():
+        values.append(db_session.updated_at)
     path = Path(settings.BASE_DIR) / "runtime" / "sessions" / f"{marketplace}.json"
     try:
-        values.append(datetime.fromtimestamp(path.stat().st_mtime, tz=datetime_timezone.utc))
-    except OSError:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        cookies = payload.get("cookies", []) if isinstance(payload, dict) else payload
+        if cookies:
+            values.append(datetime.fromtimestamp(path.stat().st_mtime, tz=datetime_timezone.utc))
+    except (OSError, ValueError, TypeError):
         pass
     return max(values) if values else None
 
@@ -61,6 +63,12 @@ def schedule_once(*, marketplaces, target, interval, username=""):
             if paused.source_status == "blocked":
                 refreshed = _session_updated_at(marketplace)
                 baseline = paused.started_at or paused.created_at
+                attempted_at = (paused.checkpoint or {}).get("session_attempted_at")
+                if attempted_at:
+                    try:
+                        baseline = max(baseline, datetime.fromisoformat(attempted_at))
+                    except (TypeError, ValueError):
+                        pass
                 can_resume = bool(refreshed and refreshed > baseline)
                 reason = "new session" if can_resume else "waiting for refreshed session"
             elif paused.source_status in ("rate_limited", "temporary_error"):
@@ -70,7 +78,14 @@ def schedule_once(*, marketplaces, target, interval, username=""):
                 reason = f"manual action required ({paused.source_status})"
             if can_resume:
                 paused.status = CollectionJob.Status.QUEUED
-                paused.save(update_fields=["status"])
+                if paused.source_status == "blocked":
+                    paused.checkpoint = {
+                        **(paused.checkpoint or {}),
+                        "session_attempted_at": now.isoformat(),
+                    }
+                    paused.save(update_fields=["status", "checkpoint"])
+                else:
+                    paused.save(update_fields=["status"])
                 _enqueue(paused)
                 events.append(f"{marketplace}: resumed job #{paused.id} ({reason})")
             else:

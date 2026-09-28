@@ -66,3 +66,25 @@ class AutoCollectTest(TestCase):
             enqueue.assert_called_once_with(job)
         finally:
             path.unlink(missing_ok=True)
+
+    @patch("core.management.commands.auto_collect._enqueue")
+    def test_same_session_is_not_retried_twice(self, enqueue):
+        started = timezone.now() - timedelta(seconds=10)
+        job = CollectionJob.objects.create(
+            marketplace=Marketplace.OZON,
+            status=CollectionJob.Status.PAUSED,
+            source_status="blocked",
+            started_at=started,
+        )
+        session_time = timezone.now() - timedelta(seconds=1)
+        with patch(
+            "core.management.commands.auto_collect._session_updated_at",
+            return_value=session_time,
+        ):
+            schedule_once(marketplaces=[Marketplace.OZON], target=10, interval=1)
+            job.refresh_from_db()
+            job.status = CollectionJob.Status.PAUSED
+            job.source_status = "blocked"
+            job.save(update_fields=["status", "source_status"])
+            schedule_once(marketplaces=[Marketplace.OZON], target=10, interval=1)
+        enqueue.assert_called_once_with(job)
