@@ -1,5 +1,6 @@
 """Control the single persistent Chromium used only for session bootstrap."""
 import json
+import socket
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from datetime import datetime, timezone
@@ -21,12 +22,15 @@ def _connect():
     from playwright.sync_api import sync_playwright
 
     endpoint = settings.BROWSER_CDP_URL.rstrip("/")
-    with urlopen(f"{endpoint}/json/version", timeout=10) as response:
+    parsed = urlparse(endpoint)
+    address = socket.gethostbyname(parsed.hostname)
+    netloc = f"{address}:{parsed.port}" if parsed.port else address
+    direct_endpoint = parsed._replace(netloc=netloc).geturl()
+    with urlopen(f"{direct_endpoint}/json/version", timeout=10) as response:
         payload = json.load(response)
     websocket = payload["webSocketDebuggerUrl"]
-    parsed = urlparse(endpoint)
-    websocket = websocket.replace("ws://localhost:9222", f"ws://{parsed.netloc}")
-    websocket = websocket.replace("ws://127.0.0.1:9222", f"ws://{parsed.netloc}")
+    websocket = websocket.replace("ws://localhost:9222", f"ws://{netloc}")
+    websocket = websocket.replace("ws://127.0.0.1:9222", f"ws://{netloc}")
     playwright = sync_playwright().start()
     try:
         browser = playwright.chromium.connect_over_cdp(websocket, timeout=15000)
