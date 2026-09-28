@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # marketplace crawling remains curl_cffi-based.  Use Debian Chromium so the
 # image does not depend on the Playwright CDN at build time.
 RUN playwright install-deps chromium && \
-    apt-get update && apt-get install -y --no-install-recommends chromium xvfb x11vnc novnc websockify && \
+    apt-get update && apt-get install -y --no-install-recommends chromium xvfb x11vnc novnc websockify socat && \
     rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium
 

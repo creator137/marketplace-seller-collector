@@ -12,6 +12,7 @@ Xvfb :99 -screen 0 1440x900x24 -ac +extension GLX +render -noreset &
 sleep 1
 x11vnc -display :99 -passwdfile "$password_file" -forever -shared -rfbport 5900 -quiet &
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
+socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222 &
 
 exec chromium \
     --no-sandbox \
