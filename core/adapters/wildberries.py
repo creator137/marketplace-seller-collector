@@ -7,6 +7,9 @@ Endpoint structure learned from public reference parsers (no licensed code).
 """
 import logging
 import re
+import time
+import uuid
+from urllib.parse import quote_plus
 
 from django.conf import settings
 
@@ -83,7 +86,8 @@ class WildberriesAdapter(MarketplaceAdapter):
         shard, _, query = (category.external_id or "").partition("|")
         query = query or category.external_id
         params = {
-            "appType": "1", "curr": "rub", "dest": self._dest(city),
+            "ab_daily_autotest": "test_group39", "appType": "1",
+            "curr": "rub", "dest": self._dest(city),
             "hide_dflags": "1048576", "hide_vflags": "4294967296",
             "inheritFilters": "true", "lang": "ru", "locale": "ru",
             "query": query, "resultset": "catalog", "sort": "popular",
@@ -101,7 +105,17 @@ class WildberriesAdapter(MarketplaceAdapter):
                 params.pop("page", None)
             self.last_page = page
             try:
-                resp = self.client.get(SEARCH_URL, params=dict(params))
+                # WB validates same-origin request context as well as the
+                # browser-issued cookie/device pair.
+                request_headers = {
+                    "referer": (
+                        "https://www.wildberries.ru/catalog/0/search.aspx"
+                        f"?page={page}&sort=popular&search={quote_plus(query)}&meta_charcs=true"
+                    ),
+                    "x-queryid": f"qid{time.time_ns()}{uuid.uuid4().int % 10**12:012d}",
+                    "x-userid": "0",
+                }
+                resp = self.client.get(SEARCH_URL, params=dict(params), headers=request_headers)
                 data = resp.json()
             except ValueError as exc:
                 body = str(getattr(resp, "text", ""))
