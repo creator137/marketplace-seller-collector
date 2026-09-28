@@ -112,6 +112,8 @@ COLLECT_MAX_SELLERS = int(os.getenv("COLLECT_MAX_SELLERS", "0"))
 COLLECT_CONCURRENCY = int(os.getenv("COLLECT_CONCURRENCY", "3"))
 COLLECT_DETAIL_CHUNK = int(os.getenv("COLLECT_DETAIL_CHUNK", "100"))
 COLLECT_PROGRESS_BATCH = int(os.getenv("COLLECT_PROGRESS_BATCH", "25"))
+BROWSER_CDP_URL = os.getenv("BROWSER_CDP_URL", "http://browser-session:9222")
+BROWSER_PUBLIC_PORT = int(os.getenv("BROWSER_PUBLIC_PORT", "6080"))
 
 # DaData enrichment TTL (days): skip re-enrichment for fresh records.
 DADATA_TTL_DAYS = int(os.getenv("DADATA_TTL_DAYS", "30"))

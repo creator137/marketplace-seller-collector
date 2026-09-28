@@ -132,6 +132,17 @@ class CatalogsViewsTest(TestCase):
         self.assertEqual(r.status_code, 302)
         self.assertFalse(MarketplaceSession.objects.filter(marketplace=Marketplace.OZON).exists())
 
+    def test_browser_save_action(self):
+        from unittest.mock import patch
+
+        with patch("core.browser_session.save_marketplace_cookies", return_value=7) as save:
+            response = self.client.post("/catalogs/?section=sessions", {
+                "action": "browser_save",
+                "marketplace": Marketplace.OZON,
+            })
+        self.assertEqual(response.status_code, 302)
+        save.assert_called_once_with(Marketplace.OZON)
+
     def test_requires_login(self):
         self.client.logout()
         self.assertEqual(self.client.get("/catalogs/").status_code, 302)

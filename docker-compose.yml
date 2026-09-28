@@ -10,7 +10,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RQ_ASYNC: "1"
     volumes:
-      - ./runtime/sessions:/app/runtime/sessions
+      - ./runtime:/app/runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,7 +30,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RQ_ASYNC: "1"
     volumes:
-      - ./runtime/sessions:/app/runtime/sessions
+      - ./runtime:/app/runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RQ_ASYNC: "1"
     volumes:
-      - ./runtime/sessions:/app/runtime/sessions
+      - ./runtime:/app/runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,6 +55,20 @@ services:
         condition: service_started
     restart: unless-stopped
     command: python manage.py auto_collect --loop
+
+  browser-session:
+    image: marketplace-seller-collector:latest
+    env_file: .env
+    environment:
+      DISPLAY: ":99"
+    volumes:
+      - ./runtime:/app/runtime
+    ports:
+      - "6080:6080"
+    expose:
+      - "9222"
+    restart: unless-stopped
+    command: sh /app/scripts/browser_session.sh
 
   catalog-sync:
     image: marketplace-seller-collector:latest

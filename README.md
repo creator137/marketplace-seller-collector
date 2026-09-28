@@ -110,6 +110,10 @@ python manage.py sync_catalogs
 Bootstrap открывает обычный пользовательский Chromium один раз. Основной crawl
 после этого всегда выполняется через curl_cffi, не через браузер:
 
+Проще всего обновить сессию из UI: «Справочники → Сессии → Открыть Chromium»,
+пройти проверку в защищённом noVNC-окне и нажать «Сохранить cookies». Chromium
+работает отдельным постоянным контейнером; основной crawler браузер не использует.
+
 ```bash
 python manage.py bootstrap_sessions --marketplace ozon
 python manage.py bootstrap_sessions --marketplace wildberries

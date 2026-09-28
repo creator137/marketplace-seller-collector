@@ -1,6 +1,8 @@
 import logging
 import threading
+from urllib.parse import quote
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
@@ -211,6 +213,46 @@ def catalogs(request):
                     )
             return _redirect("sessions")
 
+        if action == "browser_open":
+            marketplace = request.POST.get("marketplace", "")
+            if marketplace not in Marketplace.values:
+                messages.error(request, "Выберите маркетплейс")
+                return _redirect("sessions")
+            try:
+                from core.browser_session import open_marketplace, vnc_password
+
+                open_marketplace(marketplace)
+                password = quote(vnc_password())
+                hostname = request.get_host().split(":", 1)[0]
+                url = (
+                    f"{request.scheme}://{hostname}:{settings.BROWSER_PUBLIC_PORT}/vnc.html"
+                    f"?autoconnect=1&resize=scale&password={password}"
+                )
+                return redirect(url)
+            except Exception as exc:
+                log.exception("Browser bootstrap failed for %s", marketplace)
+                messages.error(request, f"Не удалось открыть серверный Chromium: {exc}")
+                return _redirect("sessions")
+
+        if action == "browser_save":
+            marketplace = request.POST.get("marketplace", "")
+            if marketplace not in Marketplace.values:
+                messages.error(request, "Выберите маркетплейс")
+            else:
+                try:
+                    from core.browser_session import save_marketplace_cookies
+
+                    count = save_marketplace_cookies(marketplace)
+                    messages.success(
+                        request,
+                        f"Сессия {dict(Marketplace.choices)[marketplace]} сохранена ({count} cookies). "
+                        "Приостановленный сбор продолжится автоматически.",
+                    )
+                except Exception as exc:
+                    log.exception("Browser cookie save failed for %s", marketplace)
+                    messages.error(request, f"Не удалось сохранить cookies: {exc}")
+            return _redirect("sessions")
+
         if action == "delete_session":
             session = MarketplaceSession.objects.filter(pk=request.POST.get("session_id")).first()
             if session:
@@ -246,6 +288,7 @@ def catalogs(request):
         "marketplace_filter": marketplace_filter,
         "marketplaces": Marketplace.choices,
         "sessions": sessions,
+        "browser_password": __import__("core.browser_session", fromlist=["vnc_password"]).vnc_password(),
     })
 
 

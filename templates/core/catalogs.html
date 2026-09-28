@@ -197,6 +197,11 @@
       <code>runtime/sessions/&lt;маркетплейс&gt;.json</code> обновляется сразу —
       новые задания подхватят сессию без перезапуска.
     </p>
+    <div class="alert alert-info mb-4">
+      <strong>Обновление без команд:</strong> нажмите «Открыть Chromium», пройдите
+      проверку площадки в новой вкладке, вернитесь сюда и нажмите «Сохранить cookies».
+      {% if browser_password %}Пароль окна: <code>{{ browser_password }}</code>.{% endif %}
+    </div>
     <div class="row g-4">
       {% for item in sessions %}
       <div class="col-lg-4">
@@ -210,6 +215,20 @@
             </div>
           </div>
           <div class="card-body">
+            <div class="d-flex gap-2 flex-wrap mb-3">
+              <form method="post" target="_blank">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="browser_open">
+                <input type="hidden" name="marketplace" value="{{ item.marketplace }}">
+                <button class="btn btn-outline-primary btn-sm" type="submit">1. Открыть Chromium</button>
+              </form>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="browser_save">
+                <input type="hidden" name="marketplace" value="{{ item.marketplace }}">
+                <button class="btn btn-success btn-sm" type="submit">2. Сохранить cookies</button>
+              </form>
+            </div>
             <form method="post">
               {% csrf_token %}
               <input type="hidden" name="action" value="save_session">
