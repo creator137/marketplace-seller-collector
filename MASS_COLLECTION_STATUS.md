@@ -9,12 +9,12 @@ executed from the deployed Docker environment (not fixtures):
   0 sellers, 3 requests, 31.14s. Existing supplied cookies are no longer valid.
 - Wildberries: working with the persistent Chromium bootstrap plus HTTP crawl;
   see the measured runs below.
-- Yandex Market: bootstrap HTTP 403; HTTP discovery returns a protection page,
-  0 sellers. No valid Yandex session is configured.
+- Yandex Market: working without a valid browser session through the regular
+  catalog list route; see the measured server run below.
 - WB geo endpoint returned HTTP 200 for Уфа, Челябинск and Екатеринбург;
   the corresponding real delivery `dest` values were resolved for deployment.
 
-The server correctly pauses blocked Ozon/Yandex runs; it does not report a false
+The server correctly pauses blocked sources; it does not report a false
 successful empty result.
 
 Real live runs from this machine (host venv, macOS, real network). Every number
@@ -22,6 +22,19 @@ below comes from an actual crawl executed on 2026-09-24; nothing is inferred
 from fixtures.
 
 ## Yandex Market — WORKING, main live result
+
+Deployed server run on 2026-09-29 after switching from protected `/search` to
+`/catalog--x/0/list` and from obsolete supplier pages to business profiles:
+
+- query: `наушники`, target: **100**
+- result: `success` — **100 unique sellers**, 20 pages, 312 products
+- details: **100/100**, 120 requests, 120×2xx, 0×403, 0×429, 0×5xx
+- duration: **108.37s**
+- persisted pipeline check: job #10 completed with 10/10 sellers; 9 names and
+  10 ratings were saved to PostgreSQL
+- cookies/session: not required in this run
+- limitation: public business profiles did not expose INN/legal address for
+  this sample, so those fields remain empty unless the marketplace response changes
 
 - endurance command: `python manage.py endurance_marketplaces --marketplace yandex_market --query "наушники" --target 100`
 - result: `success` — **100 unique seller refs**, 11 pages, 434 products, 111 requests, 0 blocked, 58s
@@ -32,8 +45,8 @@ from fixtures.
   - batch 3 (continuation of batch 2 set): **5,000+ reached**, 0 blocked
 - session bootstrap (host, headed Chromium): `runtime/sessions/yandex_market.json` created;
   `HttpClient.marketplace_cookies()` loads 27 cookies in a separate worker-like Django process (verified)
-- limitation: `/seller/<id>/` detail pages require slug URLs (bare-id URLs 404 even in browser);
-  details are `partial` — discovery refs and ratings are unaffected
+- current detail route: `/business--<slug>/<businessId>`; the obsolete
+  `/seller/<supplierId>/` route returns 404
 
 ## Ozon — blocked at browser-fingerprint level
 
