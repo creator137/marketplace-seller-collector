@@ -117,7 +117,7 @@ BROWSER_PUBLIC_PORT = int(os.getenv("BROWSER_PUBLIC_PORT", "6080"))
 
 # DaData enrichment TTL (days): skip re-enrichment for fresh records.
 DADATA_TTL_DAYS = int(os.getenv("DADATA_TTL_DAYS", "30"))
-MAPS_RATE_DELAY = float(os.getenv("MAPS_RATE_DELAY", "1.5"))
+MAPS_RATE_DELAY = float(os.getenv("MAPS_RATE_DELAY", "2.5"))
 MAPS_BROWSER_TIMEOUT = int(os.getenv("MAPS_BROWSER_TIMEOUT", "30"))
 
 LOGGING = {
