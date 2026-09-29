@@ -54,7 +54,10 @@ def run_contact_enrichment(job_id):
                     job.message = str(exc)
                 if two_gis and not two_gis_blocked:
                     try:
-                        contacts.extend(two_gis.lookup(seller.name, seller.legal_address))
+                        contacts.extend(two_gis.lookup(
+                            seller.name, seller.legal_address,
+                            seller.city.name if seller.city_id else "",
+                        ))
                     except MapsBlockedError as exc:
                         two_gis_blocked = True
                         job.message = str(exc)

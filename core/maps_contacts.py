@@ -33,6 +33,25 @@ class MapContact:
 
 LEGAL_FORMS = re.compile(r"\b(?:ооо|оао|пао|ао|ип|зао|нко)\b", re.I)
 NON_WORD = re.compile(r"[^0-9a-zа-яё]+", re.I)
+CITY_SLUGS = {
+    "москва": "moscow", "санкт петербург": "spb", "уфа": "ufa",
+    "екатеринбург": "ekaterinburg", "челябинск": "chelyabinsk",
+    "нижний новгород": "n_novgorod", "ростов на дону": "rostov_na_donu",
+    "новосибирск": "novosibirsk", "казань": "kazan", "омск": "omsk",
+    "самара": "samara", "пермь": "perm", "красноярск": "krasnoyarsk",
+    "воронеж": "voronezh", "волгоград": "volgograd", "краснодар": "krasnodar",
+    "саратов": "saratov", "тюмень": "tyumen", "барнаул": "barnaul",
+    "иркутск": "irkutsk", "хабаровск": "khabarovsk", "владивосток": "vladivostok",
+    "ставрополь": "stavropol", "калининград": "kaliningrad", "астрахань": "astrakhan",
+    "курск": "kursk", "киров": "kirov", "белгород": "belgorod",
+}
+TRANSLIT = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+})
 
 
 def normalize_text(value):
@@ -78,6 +97,11 @@ def match_quality(expected_name, expected_address, actual_name, actual_address):
     return ""
 
 
+def city_slug(city):
+    normalized = normalize_text(city)
+    return CITY_SLUGS.get(normalized) or normalized.translate(TRANSLIT).replace(" ", "_") or "moscow"
+
+
 def _walk_candidates(value):
     if isinstance(value, dict):
         phones = value.get("phones") or value.get("contactGroups") or []
@@ -112,7 +136,7 @@ class YandexMapsLookup:
     def __init__(self):
         self.http = HttpClient(referer="https://yandex.ru/maps/")
 
-    def lookup(self, name, address):
+    def lookup(self, name, address, city=""):
         query = " ".join(part for part in (name, address) if part).strip()
         if not query:
             return []
@@ -165,12 +189,12 @@ class TwoGisBrowserLookup:
             self.playwright.stop()
             self.lock.close()
 
-    def lookup(self, name, address):
+    def lookup(self, name, address, city=""):
         query = " ".join(part for part in (name, address) if part).strip()
         if not query:
             return []
-        search_url = "https://2gis.ru/search/" + quote(query)
-        self.page.goto(search_url, wait_until="domcontentloaded", timeout=settings.MAPS_BROWSER_TIMEOUT * 1000)
+        search_url = f"https://2gis.ru/{city_slug(city)}/search/" + quote(query)
+        self.page.goto(search_url, wait_until="commit", timeout=min(settings.MAPS_BROWSER_TIMEOUT, 15) * 1000)
         self.page.wait_for_timeout(2500)
         if "captcha.2gis" in self.page.url or "подозрительную активность" in self.page.locator("body").inner_text().lower():
             raise MapsBlockedError("2ГИС запросил проверку в серверном Chromium")
@@ -182,8 +206,8 @@ class TwoGisBrowserLookup:
             if href and href not in urls:
                 urls.append(href if href.startswith("http") else "https://2gis.ru" + href)
 
-        for firm_url in urls[:6]:
-            self.page.goto(firm_url, wait_until="domcontentloaded", timeout=settings.MAPS_BROWSER_TIMEOUT * 1000)
+        for firm_url in urls[:3]:
+            self.page.goto(firm_url, wait_until="commit", timeout=min(settings.MAPS_BROWSER_TIMEOUT, 15) * 1000)
             self.page.wait_for_timeout(1200)
             body = self.page.locator("body").inner_text()
             title = self.page.locator("h1").first.inner_text() if self.page.locator("h1").count() else self.page.title().split("—", 1)[0]
