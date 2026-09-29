@@ -58,7 +58,9 @@ def run_contact_enrichment(job_id):
                     contacts.extend(yandex.lookup(seller.name, seller.legal_address))
                 except MapsBlockedError as exc:
                     job.message = str(exc)
-                if two_gis and not two_gis_blocked:
+                # One verified public phone is enough for the backfill. Avoid
+                # an expensive browser navigation when Yandex already matched.
+                if not contacts and two_gis and not two_gis_blocked:
                     try:
                         contacts.extend(two_gis.lookup(
                             seller.name, seller.legal_address,

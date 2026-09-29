@@ -202,11 +202,18 @@ class TwoGisBrowserLookup:
         links = self.page.locator('a[href*="/firm/"]')
         urls = []
         for index in range(min(links.count(), 12)):
-            href = links.nth(index).get_attribute("href") or ""
-            if href and href not in urls:
+            link = links.nth(index)
+            href = link.get_attribute("href") or ""
+            try:
+                card_text = link.inner_text(timeout=1000)
+                if not card_text:
+                    card_text = link.evaluate("el => el.parentElement ? el.parentElement.innerText : ''")
+            except Exception:
+                card_text = ""
+            if href and match_quality(name, address, card_text, card_text) and href not in urls:
                 urls.append(href if href.startswith("http") else "https://2gis.ru" + href)
 
-        for firm_url in urls[:3]:
+        for firm_url in urls[:2]:
             self.page.goto(firm_url, wait_until="commit", timeout=min(settings.MAPS_BROWSER_TIMEOUT, 15) * 1000)
             self.page.wait_for_timeout(1200)
             body = self.page.locator("body").inner_text()
