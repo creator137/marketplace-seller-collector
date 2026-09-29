@@ -154,17 +154,25 @@ class YandexMapsLookup:
             state = json.loads(unescape(match.group(1)))
         except (TypeError, ValueError) as exc:
             raise RuntimeError("Не удалось разобрать состояние Яндекс Карт") from exc
-        found = []
-        seen = set()
+        candidates = []
         for raw, candidate_name, candidate_address, phones in _walk_candidates(state):
             quality = match_quality(name, address, candidate_name, candidate_address)
             if not quality:
                 continue
-            candidate_url = raw.get("url") or raw.get("uri") or url
-            for phone in _phone_values(phones):
-                if phone not in seen:
-                    seen.add(phone)
-                    found.append(MapContact(phone, "yandex_maps", quality, str(candidate_url)))
+            candidates.append(({"name": 1, "address": 2, "name+address": 3}[quality], raw, phones, quality))
+        if not candidates:
+            time.sleep(max(0, settings.MAPS_RATE_DELAY))
+            return []
+        # Search order is relevance-ranked. Use one best card, not every branch
+        # sharing a generic brand name across Russia.
+        _score, raw, phones, quality = max(candidates, key=lambda item: item[0])
+        found = []
+        seen = set()
+        candidate_url = raw.get("url") or raw.get("uri") or url
+        for phone in _phone_values(phones):
+            if phone not in seen:
+                seen.add(phone)
+                found.append(MapContact(phone, "yandex_maps", quality, str(candidate_url)))
         time.sleep(max(0, settings.MAPS_RATE_DELAY))
         return found
 

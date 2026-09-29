@@ -4,7 +4,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from django.conf import settings
-from django.db.models import Q
 from django.utils import timezone
 
 from core.maps_contacts import MapsBlockedError, TwoGisBrowserLookup, YandexMapsLookup
@@ -15,7 +14,9 @@ log = logging.getLogger("core.contact_tasks")
 
 
 def _seller_queryset(job):
-    queryset = Seller.objects.exclude(Q(inn="") & Q(legal_address="") & Q(name=""))
+    # Maps backfill is evidence-based: start from an INN (which DaData can turn
+    # into a legal address) or an address already supplied by the marketplace.
+    queryset = Seller.objects.exclude(inn="", legal_address="")
     if job.collection_job_id:
         queryset = queryset.filter(collection_links__job_id=job.collection_job_id)
     elif job.marketplace:
