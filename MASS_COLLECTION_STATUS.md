@@ -93,6 +93,11 @@ sample sellers. A subsequent interrupted 100-seller job resumed and finished all
 details; foreign tax identifiers are retained in raw data instead of overflowing
 the 12-character Russian INN field.
 
+Production resume check: existing job #6 resumed from page 11 with 623 previously
+saved refs, reached 3,617 discovered refs and completed successfully in 11m25s.
+It processed 2,500 details with 0 detail failures, saved 1,708 INNs and 1,640
+DaData legal addresses/cities, and matched 1,008 sellers against the target 1,000.
+
 ## Bootstrap notes
 
 - host bootstrap: `python manage.py bootstrap_sessions --marketplace <code>`
