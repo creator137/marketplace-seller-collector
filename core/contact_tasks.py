@@ -1,6 +1,9 @@
 import logging
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
@@ -30,7 +33,7 @@ def run_contact_enrichment(job_id):
     job.total = queryset.count()
     job.save(update_fields=["status", "started_at", "finished_at", "message", "total"])
 
-    yandex = YandexMapsLookup()
+    yandex_blocked = False
     two_gis_blocked = False
     # Playwright's synchronous CDP client owns an asyncio loop while connected.
     # This RQ job is strictly single-threaded/sequential, so ORM access remains
@@ -47,41 +50,61 @@ def run_contact_enrichment(job_id):
         two_gis_blocked = True
 
     try:
-        for seller in queryset.iterator(chunk_size=100):
-            try:
-                # Refresh legal name/address first. TTL prevents unnecessary
-                # DaData requests for sellers already enriched recently.
-                enrich_with_dadata(seller)
-                seller.refresh_from_db()
-                contacts = []
-                try:
-                    contacts.extend(yandex.lookup(seller.name, seller.legal_address))
-                except MapsBlockedError as exc:
-                    job.message = str(exc)
-                # One verified public phone is enough for the backfill. Avoid
-                # an expensive browser navigation when Yandex already matched.
-                if not contacts and two_gis and not two_gis_blocked:
+        local = threading.local()
+
+        def yandex_lookup(seller):
+            if not hasattr(local, "yandex"):
+                local.yandex = YandexMapsLookup()
+            return local.yandex.lookup(seller.name, seller.legal_address)
+
+        sellers = list(queryset.select_related("city").iterator(chunk_size=100))
+        batch_size = max(10, settings.COLLECT_CONCURRENCY * 5)
+        with ThreadPoolExecutor(max_workers=max(1, settings.COLLECT_CONCURRENCY)) as pool:
+            for offset in range(0, len(sellers), batch_size):
+                chunk = sellers[offset:offset + batch_size]
+                for seller in chunk:
+                    # TTL prevents unnecessary DaData requests for sellers
+                    # that were already enriched by the collection pipeline.
+                    enrich_with_dadata(seller)
+                    seller.refresh_from_db()
+                futures = {
+                    seller.id: pool.submit(yandex_lookup, seller)
+                    for seller in chunk if not yandex_blocked
+                }
+                for seller in chunk:
+                    contacts = []
                     try:
-                        contacts.extend(two_gis.lookup(
-                            seller.name, seller.legal_address,
-                            seller.city.name if seller.city_id else "",
-                        ))
+                        if seller.id in futures:
+                            contacts.extend(futures[seller.id].result())
                     except MapsBlockedError as exc:
-                        two_gis_blocked = True
+                        yandex_blocked = True
                         job.message = str(exc)
-                added = 0
-                for contact in contacts:
-                    ref = f"match={contact.quality}; {contact.url}"[:255]
-                    added += int(merge_external_phone(seller, contact.phone, contact.source, ref))
-                if contacts:
-                    job.matched += 1
-                job.contacts_added += added
-            except Exception as exc:
-                job.errors_count += 1
-                log.warning("Contact enrichment seller=%s failed: %s", seller.id, exc)
-            job.processed += 1
-            if job.processed % 10 == 0:
-                job.save(update_fields=["processed", "matched", "contacts_added", "errors_count", "message"])
+                    except Exception as exc:
+                        job.errors_count += 1
+                        log.warning("Yandex maps seller=%s failed: %s", seller.id, exc)
+                    # One verified public phone is enough for the backfill.
+                    if not contacts and two_gis and not two_gis_blocked:
+                        try:
+                            contacts.extend(two_gis.lookup(
+                                seller.name, seller.legal_address,
+                                seller.city.name if seller.city_id else "",
+                            ))
+                        except MapsBlockedError as exc:
+                            two_gis_blocked = True
+                            job.message = str(exc)
+                        except Exception as exc:
+                            job.errors_count += 1
+                            log.warning("2GIS seller=%s failed: %s", seller.id, exc)
+                    added = 0
+                    for contact in contacts:
+                        ref = f"match={contact.quality}; {contact.url}"[:255]
+                        added += int(merge_external_phone(seller, contact.phone, contact.source, ref))
+                    if contacts:
+                        job.matched += 1
+                    job.contacts_added += added
+                    job.processed += 1
+                    if job.processed % 10 == 0:
+                        job.save(update_fields=["processed", "matched", "contacts_added", "errors_count", "message"])
     except Exception as exc:
         job.status = job.Status.FAILED
         job.message = str(exc)[:2000]
