@@ -36,6 +36,14 @@ class YandexMarketDiscoveryFieldsTest(TestCase):
         self.assertEqual(snippets[0]["supplierName"], "Shop One")
         self.assertEqual(snippets[0]["rating"]["rating"], "4.9")
 
+    def test_parse_snippets_accepts_reversed_attribute_order(self):
+        page = (
+            '<div data-zone-data="{&quot;marketSku&quot;:&quot;1&quot;,'
+            '&quot;businessId&quot;:&quot;9001&quot;}" '
+            'class="snippet" data-zone-name="productSnippet"></div>'
+        )
+        self.assertEqual(parse_snippets(page)[0]["businessId"], "9001")
+
     @patch("core.adapters.yandex_market.HttpClient")
     def test_discover_returns_id_name_url_rating(self, client_cls):
         resp = MagicMock(status_code=200)
@@ -44,6 +52,8 @@ class YandexMarketDiscoveryFieldsTest(TestCase):
 
         cat = Category(marketplace=Marketplace.YM, external_id="футболка", title="Футболки")
         sellers = YandexMarketAdapter().discover_sellers(cat, limit=10)
+
+        self.assertIn("/catalog--x/0/list", client_cls.return_value.get.call_args.args[0])
 
         self.assertEqual(len(sellers), 2)
         first, second = sellers
@@ -66,6 +76,26 @@ class YandexMarketDiscoveryFieldsTest(TestCase):
         self.assertEqual(second.name, "")  # supplierName отсутствует в сниппете
         self.assertEqual(second.rating, "")
 
+    @patch("core.adapters.yandex_market.HttpClient")
+    def test_discovery_prefers_current_business_profile_id(self, client_cls):
+        resp = MagicMock(status_code=200)
+        resp.text = (
+            '<div data-zone-name="productSnippet" data-zone-data="'
+            '{&quot;marketSku&quot;:&quot;111&quot;,'
+            '&quot;supplierId&quot;:&quot;216408895&quot;,'
+            '&quot;businessId&quot;:&quot;125778503&quot;}"></div>'
+        )
+        client_cls.return_value.get.return_value = resp
+        cat = Category(marketplace=Marketplace.YM, external_id="наушники", title="Наушники")
+
+        seller = YandexMarketAdapter().discover_sellers(cat, limit=1)[0]
+
+        self.assertEqual(seller.external_seller_id, "125778503")
+        self.assertEqual(
+            seller.seller_url,
+            "https://market.yandex.ru/business--x/125778503",
+        )
+
 
 class YandexMarketDetailFieldsTest(TestCase):
     """Поля страницы продавца (доступны только при успешном HTTP 200)."""
@@ -84,13 +114,35 @@ class YandexMarketDetailFieldsTest(TestCase):
         self.assertEqual(detail.inn, "7701234567")
         self.assertEqual(detail.ogrn, "1027700000000")
         self.assertEqual(detail.legal_address, "г. Москва, Тверская 1")
-        self.assertEqual(detail.seller_url, "https://market.yandex.ru/seller/216408895/")
+        self.assertEqual(detail.seller_url, "https://market.yandex.ru/business--x/216408895")
         self.assertEqual(detail.mobile_phones, [])
         self.assertEqual(detail.emails, [])
 
         seller = upsert_seller(detail)
         self.assertEqual(seller.inn, "7701234567")
         self.assertEqual(seller.name, "ООО Маркет Шоп")
+
+    @patch("core.adapters.yandex_market.HttpClient")
+    def test_current_business_profile_parses_name_rating_and_canonical_url(self, client_cls):
+        resp = MagicMock(status_code=200)
+        resp.url = "https://market.yandex.ru/business--x/125778503"
+        resp.text = (
+            '<script>{"shopName":"IDDQD","shopRating":4.5,'
+            '"navigationUrl":"/business--iddqd/125778503"}</script>'
+        )
+        client_cls.return_value.get.return_value = resp
+
+        detail = YandexMarketAdapter().fetch_seller(
+            "https://market.yandex.ru/business--x/125778503"
+        )
+
+        self.assertEqual(detail.external_seller_id, "125778503")
+        self.assertEqual(detail.name, "IDDQD")
+        self.assertEqual(detail.rating, "4.5")
+        self.assertEqual(
+            detail.seller_url,
+            "https://market.yandex.ru/business--iddqd/125778503",
+        )
 
     @patch("core.adapters.yandex_market.HttpClient")
     def test_seller_page_404_returns_none(self, client_cls):
