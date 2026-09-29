@@ -1,4 +1,5 @@
 import logging
+import os
 
 from django.db.models import Q
 from django.utils import timezone
@@ -31,6 +32,11 @@ def run_contact_enrichment(job_id):
 
     yandex = YandexMapsLookup()
     two_gis_blocked = False
+    # Playwright's synchronous CDP client owns an asyncio loop while connected.
+    # This RQ job is strictly single-threaded/sequential, so ORM access remains
+    # safe; Django only needs the explicit opt-in while that loop is alive.
+    previous_async_unsafe = os.environ.get("DJANGO_ALLOW_ASYNC_UNSAFE")
+    os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
     try:
         two_gis_context = TwoGisBrowserLookup()
         two_gis = two_gis_context.__enter__()
@@ -80,6 +86,10 @@ def run_contact_enrichment(job_id):
     finally:
         if two_gis_context:
             two_gis_context.__exit__(None, None, None)
+        if previous_async_unsafe is None:
+            os.environ.pop("DJANGO_ALLOW_ASYNC_UNSAFE", None)
+        else:
+            os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = previous_async_unsafe
 
     if job.status != job.Status.FAILED:
         job.status = job.Status.PAUSED if two_gis_blocked else job.Status.COMPLETED
