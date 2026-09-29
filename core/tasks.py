@@ -316,7 +316,12 @@ def run_collection_job(job_id: int):
     job.started_at = job.started_at or timezone.now()
     job.finished_at = None
     job.error_message = ""
-    job.save(update_fields=["status", "source_status", "started_at", "finished_at", "error_message"])
+    job.last_error = ""
+    job.retry_after = None
+    job.save(update_fields=[
+        "status", "source_status", "started_at", "finished_at",
+        "error_message", "last_error", "retry_after",
+    ])
     adapter = get_adapter(job.marketplace)
     try:
         categories = list(job.categories.all())

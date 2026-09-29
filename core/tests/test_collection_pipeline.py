@@ -148,6 +148,8 @@ class CollectionPipelineTest(TestCase):
         job.refresh_from_db()
         self.assertEqual(link.detail_status, "done")
         self.assertEqual(job.status, CollectionJob.Status.COMPLETED)
+        self.assertEqual(job.last_error, "")
+        self.assertIsNone(job.retry_after)
 
     def test_empty_is_completed_empty(self):
         job = self.make_job()
