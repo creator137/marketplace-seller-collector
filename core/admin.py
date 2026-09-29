@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib import admin, messages
 
-from core.models import Category, City, CollectionJob, MarketplaceSession, Seller, SellerContact
+from core.models import Category, City, CollectionJob, ContactEnrichmentJob, MarketplaceSession, Seller, SellerContact
 
 admin.site.site_header = "Seller Collector — справочники"
 admin.site.site_title = "Seller Collector"
@@ -140,3 +140,10 @@ class MarketplaceSessionAdmin(admin.ModelAdmin):
             f"{len(cookies)} cookies записаны в runtime/sessions/{obj.marketplace}.json",
             level=messages.SUCCESS,
         )
+
+
+@admin.register(ContactEnrichmentJob)
+class ContactEnrichmentJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "marketplace", "status", "processed", "total", "matched", "contacts_added", "errors_count", "created_at")
+    list_filter = ("marketplace", "status")
+    readonly_fields = ("created_at", "started_at", "finished_at")

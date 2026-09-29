@@ -6,10 +6,28 @@
     <div class="page-pretitle">База</div>
     <h2 class="page-title">Продавцы <span class="text-secondary fw-normal">({{ total }})</span></h2>
   </div>
-  <div class="ms-auto">
+  <div class="ms-auto d-flex gap-2 flex-wrap">
+    <form method="post" action="{% url 'open_2gis_browser' %}" target="_blank">{% csrf_token %}
+      <button class="btn btn-outline-secondary" type="submit">Открыть 2ГИС / captcha</button>
+    </form>
+    <form method="post" action="{% url 'enrich_contacts' %}">{% csrf_token %}
+      <input type="hidden" name="marketplace" value="{{ marketplace }}">
+      <input type="hidden" name="job" value="{{ job_id }}">
+      <button class="btn btn-warning" type="submit">Дозаполнить телефоны</button>
+    </form>
     <a class="btn btn-primary" href="{% url 'export_all' %}">Экспорт всех</a>
   </div>
 </div>
+
+{% if enrichment %}
+<div class="alert {% if enrichment.status == 'completed' %}alert-success{% elif enrichment.status == 'failed' %}alert-danger{% else %}alert-info{% endif %}"
+     {% if enrichment.status == 'queued' or enrichment.status == 'running' %}hx-get="{{ request.get_full_path }}" hx-select=".alert" hx-swap="outerHTML" hx-trigger="every 5s"{% endif %}>
+  <strong>Дозаполнение #{{ enrichment.id }}: {{ enrichment.get_status_display }}</strong> —
+  {{ enrichment.processed }} / {{ enrichment.total }}, совпадений {{ enrichment.matched }},
+  добавлено контактов {{ enrichment.contacts_added }}, ошибок {{ enrichment.errors_count }}.
+  {% if enrichment.message %}<div class="small mt-1">{{ enrichment.message }}</div>{% endif %}
+</div>
+{% endif %}
 
 <div class="card">
   <form class="card-body border-bottom" method="get">

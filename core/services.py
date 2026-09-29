@@ -51,6 +51,11 @@ def _merge_contact(seller, ctype, raw_value, source, source_ref=""):
     return created
 
 
+def merge_external_phone(seller, raw_value, source, source_ref=""):
+    """Persist a normalized public phone while retaining its provenance."""
+    return _merge_contact(seller, "phone", raw_value, source, source_ref)
+
+
 def merge_seller_data(seller: Seller, data: SellerData) -> bool:
     """Merge SellerData into an existing Seller. Returns True if changed."""
     changed = False

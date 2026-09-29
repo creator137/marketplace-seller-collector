@@ -205,9 +205,13 @@ class SellerContact(models.Model):
 
     SOURCE_MARKETPLACE = "marketplace"
     SOURCE_DADATA = "dadata"
+    SOURCE_YANDEX_MAPS = "yandex_maps"
+    SOURCE_2GIS = "2gis"
     SOURCE_CHOICES = [
         (SOURCE_MARKETPLACE, "Маркетплейс"),
         (SOURCE_DADATA, "DaData"),
+        (SOURCE_YANDEX_MAPS, "Яндекс Карты"),
+        (SOURCE_2GIS, "2ГИС"),
     ]
 
     seller = models.ForeignKey(Seller, on_delete=models.CASCADE, related_name="contacts")
@@ -296,3 +300,36 @@ class CollectionJobSeller(models.Model):
             models.Index(fields=["job", "detail_status"]),
             models.Index(fields=["external_seller_id"]),
         ]
+
+
+class ContactEnrichmentJob(models.Model):
+    """Small progress record for the optional maps contact backfill."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "В очереди"
+        RUNNING = "running", "Выполняется"
+        PAUSED = "paused", "Нужна проверка 2ГИС"
+        COMPLETED = "completed", "Завершён"
+        FAILED = "failed", "Ошибка"
+
+    user = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL)
+    marketplace = models.CharField(max_length=32, choices=Marketplace.choices, blank=True, default="")
+    collection_job = models.ForeignKey(
+        CollectionJob, null=True, blank=True, on_delete=models.SET_NULL, related_name="contact_enrichments",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    total = models.PositiveIntegerField(default=0)
+    processed = models.PositiveIntegerField(default=0)
+    matched = models.PositiveIntegerField(default=0)
+    contacts_added = models.PositiveIntegerField(default=0)
+    errors_count = models.PositiveIntegerField(default=0)
+    message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Contact enrichment #{self.pk} [{self.status}]"

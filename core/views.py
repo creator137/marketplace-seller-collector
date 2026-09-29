@@ -12,7 +12,7 @@ from django.views.decorators.http import require_POST
 
 from core.export import export_all_xlsx, export_job_xlsx
 from core.citymatch import normalize_city_name
-from core.models import Category, City, CollectionJob, Marketplace, MarketplaceSession, Seller
+from core.models import Category, City, CollectionJob, ContactEnrichmentJob, Marketplace, MarketplaceSession, Seller
 from core.tasks import run_collection_job
 
 log = logging.getLogger("core.views")
@@ -365,12 +365,21 @@ def results(request):
     qs_str = querystring.urlencode()
     if qs_str:
         qs_str += "&"
+    enrichment_scope = Q()
+    if job_id.isdigit():
+        enrichment_scope &= Q(collection_job_id=int(job_id))
+    elif marketplace in Marketplace.values:
+        enrichment_scope &= Q(marketplace=marketplace, collection_job=None)
+    else:
+        enrichment_scope &= Q(marketplace="", collection_job=None)
+    enrichment = ContactEnrichmentJob.objects.filter(enrichment_scope).first()
     return render(request, "core/results.html", {
         "sellers": sellers, "total": total, "page": page, "pages": pages,
         "cities": City.objects.all(), "marketplace": marketplace,
         "view_marketplaces": Marketplace.choices,
         "city_id": city_id, "has_contacts": has_contacts, "q": q,
         "job_id": job_id,
+        "enrichment": enrichment,
         "querystring": qs_str,
     })
 
@@ -408,3 +417,55 @@ def enrich_seller(request, seller_id):
     seller = Seller.objects.get(pk=seller_id)
     enrich_with_dadata(seller, force=True)
     return redirect(request.META.get("HTTP_REFERER") or reverse("results"))
+
+
+@login_required
+@require_POST
+def enrich_contacts(request):
+    marketplace = request.POST.get("marketplace", "")
+    job_id = request.POST.get("job", "")
+    if marketplace not in Marketplace.values:
+        marketplace = ""
+    collection_job = CollectionJob.objects.filter(pk=job_id).first() if job_id.isdigit() else None
+    active = ContactEnrichmentJob.objects.filter(
+        marketplace=marketplace if not collection_job else "",
+        collection_job=collection_job,
+        status__in=(ContactEnrichmentJob.Status.QUEUED, ContactEnrichmentJob.Status.RUNNING),
+    ).first()
+    if active:
+        messages.warning(request, f"Дозаполнение #{active.id} уже выполняется")
+    else:
+        enrichment = ContactEnrichmentJob.objects.create(
+            user=request.user,
+            marketplace=marketplace if not collection_job else "",
+            collection_job=collection_job,
+        )
+        from core.contact_tasks import run_contact_enrichment
+        try:
+            _rq_queue().enqueue(run_contact_enrichment, enrichment.id, job_timeout=43200)
+        except Exception as exc:
+            log.warning("RQ enqueue failed (%s); running contact enrichment %s in background", exc, enrichment.id)
+            thread = threading.Thread(target=run_contact_enrichment, args=(enrichment.id,), daemon=True)
+            thread.start()
+        messages.success(request, f"Дозаполнение контактов #{enrichment.id} поставлено в очередь")
+    suffix = f"?job={collection_job.id}" if collection_job else (f"?marketplace={marketplace}" if marketplace else "")
+    return redirect(f"{reverse('results')}{suffix}")
+
+
+@login_required
+@require_POST
+def open_2gis_browser(request):
+    try:
+        from core.browser_session import open_2gis, vnc_password
+
+        open_2gis()
+        password = quote(vnc_password())
+        hostname = request.get_host().split(":", 1)[0]
+        return redirect(
+            f"{request.scheme}://{hostname}:{settings.BROWSER_PUBLIC_PORT}/vnc.html"
+            f"?autoconnect=1&resize=scale&password={password}"
+        )
+    except Exception as exc:
+        log.exception("2GIS browser open failed")
+        messages.error(request, f"Не удалось открыть 2ГИС: {exc}")
+        return redirect(request.META.get("HTTP_REFERER") or reverse("results"))

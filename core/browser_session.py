@@ -97,6 +97,24 @@ def open_marketplace(marketplace):
         playwright.stop()
 
 
+def open_2gis():
+    """Open 2GIS in the persistent visible Chromium for manual verification."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    playwright, browser = _connect()
+    try:
+        context = browser.contexts[0] if browser.contexts else browser.new_context(locale="ru-RU")
+        page = context.new_page()
+        try:
+            page.goto("https://2gis.ru/search/магазин", wait_until="commit", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+        page.bring_to_front()
+        return page.url
+    finally:
+        playwright.stop()
+
+
 def save_marketplace_cookies(marketplace):
     playwright, browser = _connect()
     try:
