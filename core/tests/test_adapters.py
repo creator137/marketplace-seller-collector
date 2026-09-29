@@ -242,6 +242,7 @@ class WildberriesParsingTest(TestCase):
         calls = client_cls.return_value.get.call_args_list
         self.assertIn("/common/v18/search", calls[0].args[0])
         self.assertNotIn("page", calls[0].kwargs["params"])
+        self.assertNotIn("x-queryid", calls[0].kwargs["headers"])
         self.assertEqual(calls[1].kwargs["params"]["page"], "2")
 
     @patch("core.adapters.wildberries.HttpClient")
@@ -263,3 +264,43 @@ class WildberriesParsingTest(TestCase):
         self.assertEqual(client_cls.call_args.kwargs["headers"]["user-agent"], "Browser Test/154")
         self.assertEqual(client_cls.call_args.kwargs["headers"]["sec-ch-ua"], '"Chromium";v="154"')
         self.assertEqual(client_cls.call_args.kwargs["impersonate"], "chrome150")
+
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_synced_category_uses_title_not_routing_query(self, client_cls):
+        response = MagicMock()
+        response.json.return_value = {"data": {"products": []}}
+        client_cls.return_value.get.return_value = response
+        from core.adapters.wildberries import WildberriesAdapter
+
+        cat = Category(
+            marketplace=Marketplace.WB,
+            external_id="electronic81|cat=60808",
+            title="3D-печать",
+        )
+        list(WildberriesAdapter().iter_sellers(cat, max_sellers=10))
+
+        params = client_cls.return_value.get.call_args.kwargs["params"]
+        self.assertEqual(params["query"], "3D-печать")
+
+    @patch("core.browser_session.refresh_marketplace_session")
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_blocked_search_refreshes_session_once(self, client_cls, refresh):
+        from core.httpclient import HttpError
+
+        blocked = MagicMock()
+        success = MagicMock()
+        success.json.return_value = {"data": {"products": []}}
+        first_client = MagicMock()
+        second_client = MagicMock()
+        first_client.get.side_effect = HttpError("HTTP 498", status=498)
+        second_client.get.return_value = success
+        client_cls.side_effect = [first_client, second_client]
+        client_cls.marketplace_session.return_value = {}
+        client_cls.marketplace_cookies.return_value = {}
+        from core.adapters.wildberries import WildberriesAdapter
+
+        cat = Category(marketplace=Marketplace.WB, external_id="носки", title="Носки")
+        list(WildberriesAdapter().iter_sellers(cat, max_sellers=10))
+
+        refresh.assert_called_once_with("wildberries")
+        second_client.get.assert_called_once()

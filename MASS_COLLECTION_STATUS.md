@@ -1,24 +1,21 @@
 # Mass collection status
 
-## Server deployment — 2026-09-28
+## Server deployment — 2026-09-29
 
 Server IP `2.56.241.55`, headless Chromium bootstrap and HTTP endurance were
 executed from the deployed Docker environment (not fixtures):
 
 - Ozon: bootstrap HTTP 403; entrypoint and composer discovery HTTP 403,
   0 sellers, 3 requests, 31.14s. Existing supplied cookies are no longer valid.
-- Wildberries: bootstrap HTTP 498; discovery HTTP 403 on page 1,
-  0 sellers. No valid WB session is configured.
+- Wildberries: working with the persistent Chromium bootstrap plus HTTP crawl;
+  see the measured runs below.
 - Yandex Market: bootstrap HTTP 403; HTTP discovery returns a protection page,
   0 sellers. No valid Yandex session is configured.
 - WB geo endpoint returned HTTP 200 for Уфа, Челябинск and Екатеринбург;
   the corresponding real delivery `dest` values were resolved for deployment.
 
-The server correctly pauses these runs as `blocked`; it does not report a false
-successful empty result. A successful 100+ server crawl cannot be claimed until
-a normal-browser session accepted from this server/IP is supplied. Earlier
-successful live results below were obtained from the development host and remain
-valid only for that environment/session.
+The server correctly pauses blocked Ozon/Yandex runs; it does not report a false
+successful empty result.
 
 Real live runs from this machine (host venv, macOS, real network). Every number
 below comes from an actual crawl executed on 2026-09-24; nothing is inferred
@@ -50,15 +47,57 @@ from fixtures.
 - consequence: Ozon requires cookies from a real user browser (`.env` OZON_COOKIES) and
   periodic refresh; `bootstrap_sessions` on Playwright Chromium cannot obtain them here
 
-## Wildberries
+## Wildberries — WORKING on deployed server
 
-- search/card endpoints still require a valid session (403/498 without cookies);
-  category menu JSON works; no session available from this environment
+tested_at: 2026-09-29
+query/category: `носки`, `платье`, synced UI category `Платья`
+cookies/session: persistent server Chromium; automatic refresh on 403/498
+target: 100
+discovered: 100 unique sellers
+details: 100/100
+INN: 96/100
+address: not measured by endurance (DaData pipeline separately verified live)
+pages: 2
+requests: 102
+403: 0
+429: 0
+duration: 1.79s collector time (7.43s command wall time)
+result: success
+limitation: browser bootstrap is required when the short-lived x-pow session expires
+
+target: 1000
+discovered: 1000 unique sellers (`платье`)
+details: 1000/1000
+INN: 973/1000
+pages: 28
+requests: 1028
+403: 0
+429: 0
+duration: 31.22s collector time
+result: success
+
+target: 5000
+discovered: 1800 unique sellers; query exhausted after the WB 60-page visible limit
+details: 1800/1800
+INN: 1751/1800
+pages: 60
+requests: 1861
+403: 0
+429: 0
+duration: 65.44s collector time
+result: partial by target, successful source exhaustion
+
+Pipeline check: a blocked DB job was resumed after automatic session refresh and
+completed; WB detail → Russian INN → DaData produced legal address/city for 8/10
+sample sellers. A subsequent interrupted 100-seller job resumed and finished all
+details; foreign tax identifiers are retained in raw data instead of overflowing
+the 12-character Russian INN field.
 
 ## Bootstrap notes
 
-- host bootstrap (recommended): `python manage.py bootstrap_sessions --marketplace <code>`
+- host bootstrap: `python manage.py bootstrap_sessions --marketplace <code>`
   opens a visible browser on the host and writes `./runtime/sessions/<code>.json`
 - Docker: `./runtime/sessions` is bind-mounted into both `web` and `worker`, so a session
   created on the host is visible to the RQ worker without rebuild
-- Docker image bootstrap needs `DISPLAY` for headed mode; host bootstrap is the supported path
+- deployed WB jobs automatically refresh the persistent server Chromium session
+  after 403/498 and continue the same HTTP crawl; the browser is not used for page crawling

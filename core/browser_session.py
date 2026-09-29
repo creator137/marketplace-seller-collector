@@ -1,5 +1,6 @@
 """Control the single persistent Chromium used only for session bootstrap."""
 import json
+import fcntl
 import socket
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -107,29 +108,38 @@ def save_marketplace_cookies(marketplace):
             (item for item in context.pages if marketplace_host(marketplace) in item.url),
             context.pages[0] if context.pages else None,
         )
-        local_storage = {}
-        browser_fingerprint = {}
-        if page is not None:
-            if marketplace == "wildberries" and "Chrome/150." not in page.evaluate("navigator.userAgent"):
-                raise RuntimeError("Сначала откройте Wildberries кнопкой «Открыть Chromium»")
-            try:
-                browser_fingerprint = page.evaluate("""() => {
-                    const data = navigator.userAgentData;
-                    return {
-                        user_agent: navigator.userAgent || '',
-                        brands: data ? data.brands : [],
-                        mobile: data ? data.mobile : false,
-                        platform: data ? data.platform : navigator.platform,
-                    };
-                }""")
-                if marketplace == "wildberries":
-                    device_id = page.evaluate("localStorage.getItem('wbx__sessionID') || ''")
-                    if device_id:
-                        local_storage["wbx__sessionID"] = device_id
-            except Exception:
-                local_storage = {}
+        local_storage, browser_fingerprint = _page_session_state(marketplace, page)
     finally:
         playwright.stop()
+    return _persist_marketplace_session(
+        marketplace, cookies, local_storage, browser_fingerprint,
+    )
+
+
+def _page_session_state(marketplace, page):
+    local_storage = {}
+    browser_fingerprint = {}
+    if page is None:
+        return local_storage, browser_fingerprint
+    if marketplace == "wildberries" and "Chrome/150." not in page.evaluate("navigator.userAgent"):
+        raise RuntimeError("Сначала откройте Wildberries кнопкой «Открыть Chromium»")
+    browser_fingerprint = page.evaluate("""() => {
+        const data = navigator.userAgentData;
+        return {
+            user_agent: navigator.userAgent || '',
+            brands: data ? data.brands : [],
+            mobile: data ? data.mobile : false,
+            platform: data ? data.platform : navigator.platform,
+        };
+    }""")
+    if marketplace == "wildberries":
+        device_id = page.evaluate("localStorage.getItem('wbx__sessionID') || ''")
+        if device_id:
+            local_storage["wbx__sessionID"] = device_id
+    return local_storage, browser_fingerprint
+
+
+def _persist_marketplace_session(marketplace, cookies, local_storage, browser_fingerprint):
     if not cookies:
         raise RuntimeError("Браузер не получил cookies этой площадки")
 
@@ -161,6 +171,44 @@ def save_marketplace_cookies(marketplace):
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
     return len(cookies)
+
+
+def refresh_marketplace_session(marketplace, timeout_ms=60000):
+    """Refresh a normal browser session; never use the browser for crawling."""
+    lock_path = Path(settings.BASE_DIR) / "runtime" / f"{marketplace}_bootstrap.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        playwright, browser = _connect()
+        cookies = []
+        local_storage = {}
+        browser_fingerprint = {}
+        try:
+            context = browser.contexts[0] if browser.contexts else browser.new_context(locale="ru-RU")
+            page = context.pages[0] if context.pages else context.new_page()
+            if marketplace == "wildberries":
+                _configure_wildberries_browser(context, page)
+            response_seen = False
+
+            def response_handler(response):
+                nonlocal response_seen
+                if marketplace == "wildberries" and "u-search/exactmatch" in response.url:
+                    response_seen = response.status == 200
+
+            page.on("response", response_handler)
+            page.goto(URLS[marketplace], wait_until="commit", timeout=15000)
+            deadline = datetime.now(timezone.utc).timestamp() + timeout_ms / 1000
+            while datetime.now(timezone.utc).timestamp() < deadline and not response_seen:
+                page.wait_for_timeout(500)
+            if marketplace == "wildberries" and not response_seen:
+                raise RuntimeError("Wildberries не подтвердил браузерную сессию")
+            cookies = context.cookies([URLS[marketplace]])
+            local_storage, browser_fingerprint = _page_session_state(marketplace, page)
+        finally:
+            playwright.stop()
+        return _persist_marketplace_session(
+            marketplace, cookies, local_storage, browser_fingerprint,
+        )
 
 
 def marketplace_host(marketplace):

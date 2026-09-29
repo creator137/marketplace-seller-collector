@@ -28,6 +28,13 @@ WB_SEARCH = {
     }
 }
 
+WB_STATIC_CARD = {
+    "supplierId": 555001,
+    "supplierName": "ООО Носки",
+    "inn": "0277001234",
+    "ogrnip": "324020000000001",
+}
+
 WB_CARD = {
     "data": {
         "supplierName": "ООО Носки",
@@ -83,7 +90,7 @@ class WildberriesDetailFieldsTest(TestCase):
         resp.json.return_value = WB_CARD
         client_cls.return_value.get.return_value = resp
 
-        detail = WildberriesAdapter().fetch_seller("555001")
+        detail = WildberriesAdapter().fetch_seller("https://www.wildberries.ru/seller/555001")
 
         self.assertEqual(detail.marketplace, "wildberries")
         self.assertEqual(detail.external_seller_id, "555001")
@@ -102,3 +109,32 @@ class WildberriesDetailFieldsTest(TestCase):
         self.assertEqual(seller.inn, "0277001234")
         self.assertEqual(seller.website, "https://socks.example")
         self.assertEqual(seller.legal_address, "г. Уфа, ул. Первомайская, 1")
+
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_current_static_card_returns_inn_and_ogrnip(self, client_cls):
+        response = MagicMock()
+        response.json.return_value = WB_STATIC_CARD
+        client_cls.return_value.get.return_value = response
+
+        detail = WildberriesAdapter().fetch_seller("555001")
+
+        self.assertEqual(detail.inn, "0277001234")
+        self.assertEqual(detail.ogrn, "324020000000001")
+        self.assertIn("supplier-by-id/555001.json", client_cls.return_value.get.call_args.args[0])
+        self.assertEqual(client_cls.return_value.get.call_count, 1)
+
+    @patch("core.adapters.wildberries.HttpClient")
+    def test_foreign_taxpayer_code_does_not_overflow_russian_inn(self, client_cls):
+        response = MagicMock()
+        response.json.return_value = {
+            "supplierId": 1420816,
+            "supplierName": "NR brand",
+            "inn": "10705199101933",
+            "taxpayerCode": "10705199101933",
+        }
+        client_cls.return_value.get.return_value = response
+
+        detail = WildberriesAdapter().fetch_seller("1420816")
+
+        self.assertEqual(detail.inn, "")
+        self.assertEqual(detail.raw["taxpayerCode"], "10705199101933")

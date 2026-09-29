@@ -7,20 +7,18 @@ Endpoint structure learned from public reference parsers (no licensed code).
 """
 import logging
 import re
-import time
-import uuid
 from urllib.parse import quote_plus
 
 from django.conf import settings
 
 from core.adapters.base import CollectionBlocked, CollectionParseError, MarketplaceAdapter, SellerData
 from core.httpclient import HttpClient
+from core.httpclient import HttpError
 
 log = logging.getLogger("core.adapters.wb")
 
 SEARCH_URL = "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search"
 CARD_URL = "https://card.wb.ru/cards/v2/detail"
-SELLER_CARD_URL = "https://sellers.wb.ru/sellers/v1/supplier/{id}/card-info"
 SELLER_STATIC_URL = "https://static-basket-01.wbbasket.ru/vol0/data/supplier-by-id/{id}.json"
 MENU_URL = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json"
 
@@ -43,6 +41,9 @@ class WildberriesAdapter(MarketplaceAdapter):
     def __init__(self):
         self.last_page = 0
         self.metrics = {"pages": 0, "products": 0, "seller_refs": 0, "duplicates": 0}
+        self._reset_client()
+
+    def _reset_client(self):
         runtime_session = HttpClient.marketplace_session("wildberries")
         local_storage = runtime_session.get("local_storage") or {}
         browser = runtime_session.get("browser") or {}
@@ -65,6 +66,25 @@ class WildberriesAdapter(MarketplaceAdapter):
             headers=headers,
             impersonate=WB_IMPERSONATE,
         )
+
+    def _search(self, params, headers):
+        try:
+            return self.client.get(SEARCH_URL, params=dict(params), headers=headers)
+        except HttpError as exc:
+            if not exc.blocked:
+                raise
+            # A WB browser session is short-lived. Refresh it once using the
+            # persistent bootstrap Chromium, then continue the crawl via HTTP.
+            from core.browser_session import refresh_marketplace_session
+
+            log.warning("WB session blocked; refreshing browser bootstrap once")
+            try:
+                refresh_marketplace_session("wildberries")
+            except Exception:
+                log.exception("WB automatic browser bootstrap failed")
+                raise exc
+            self._reset_client()
+            return self.client.get(SEARCH_URL, params=dict(params), headers=headers)
 
     def _dest(self, city=None) -> str:
         if city is not None and getattr(city, "dest_code", ""):
@@ -98,6 +118,13 @@ class WildberriesAdapter(MarketplaceAdapter):
         """Stream WB product pages and persist the next page checkpoint."""
         shard, _, query = (category.external_id or "").partition("|")
         query = query or category.external_id
+        # The synchronized WB menu stores routing keys such as
+        # ``electronic81|cat=60808``.  catalog.wb.ru is independently blocked
+        # on many data-centre IPs, while the protected storefront search is
+        # available with the bootstrapped session.  Search by the real menu
+        # title instead of literally searching for ``cat=60808``.
+        if shard and "=" in query:
+            query = (category.title or query).strip()
         params = {
             "ab_testing": "false", "appType": "1",
             "curr": "rub", "dest": self._dest(city),
@@ -125,10 +152,9 @@ class WildberriesAdapter(MarketplaceAdapter):
                         "https://www.wildberries.ru/catalog/0/search.aspx"
                         f"?page={page}&sort=popular&search={quote_plus(query)}&meta_charcs=true"
                     ),
-                    "x-queryid": f"qid{time.time_ns()}{uuid.uuid4().int % 10**12:012d}",
                     "x-userid": "0",
                 }
-                resp = self.client.get(SEARCH_URL, params=dict(params), headers=request_headers)
+                resp = self._search(params, request_headers)
                 data = resp.json()
             except ValueError as exc:
                 body = str(getattr(resp, "text", ""))
@@ -192,7 +218,12 @@ class WildberriesAdapter(MarketplaceAdapter):
 
     def fetch_seller(self, ref: str) -> SellerData | None:
         """Supplier card: name, INN/OGRN, address, site if returned."""
-        for url_tpl in (SELLER_CARD_URL, SELLER_STATIC_URL):
+        raw_ref = str(ref)
+        match = re.search(r"/seller/(\d+)", raw_ref)
+        ref = match.group(1) if match else raw_ref.strip()
+        if not ref.isdigit():
+            raise CollectionParseError(f"Invalid WB supplier reference: {raw_ref[:200]}")
+        for url_tpl in (SELLER_STATIC_URL,):
             try:
                 resp = self.client.get(url_tpl.format(id=ref))
                 data = resp.json()
@@ -205,13 +236,22 @@ class WildberriesAdapter(MarketplaceAdapter):
             return None
         payload = data.get("data") or data
         addr = payload.get("address") or ""
+        inn = str(payload.get("INN") or payload.get("inn") or "").strip()
+        if not INN_RE.fullmatch(inn):
+            inn = ""
+        ogrn = str(
+            payload.get("OGRN") or payload.get("ogrn")
+            or payload.get("ogrnip") or payload.get("bin") or ""
+        ).strip()
+        if len(ogrn) > 15:
+            ogrn = ""
         return SellerData(
             marketplace=self.code,
             external_seller_id=str(ref),
             seller_url=f"https://www.wildberries.ru/seller/{ref}",
             name=payload.get("supplierName") or payload.get("name") or "",
-            inn=str(payload.get("INN") or payload.get("inn") or ""),
-            ogrn=str(payload.get("OGRN") or payload.get("ogrn") or ""),
+            inn=inn,
+            ogrn=ogrn,
             legal_address=addr,
             website=(payload.get("site") or "").strip(),
             raw=payload,
