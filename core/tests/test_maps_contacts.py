@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 
-from core.maps_contacts import YandexMapsLookup, match_quality
+from core.maps_contacts import TwoGisBrowserLookup, YandexMapsLookup, match_quality
 from core.models import ContactEnrichmentJob, Marketplace, Seller, SellerContact
 
 
@@ -37,6 +37,29 @@ class MapMatchingTest(TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].phone, "+78003330333")
         self.assertEqual(result[0].quality, "name")
+
+    @override_settings(MAPS_RATE_DELAY=0, MAPS_BROWSER_TIMEOUT=10)
+    def test_2gis_uses_browser_context_http_and_ssr_phone(self):
+        search = Mock(
+            url="https://2gis.ru/moscow/search/x",
+            text=Mock(return_value='''
+                <article>Позитроника, бульвар Строителей, 4к1
+                <a href="/moscow/firm/123">Открыть</a></article>
+            '''),
+        )
+        detail = Mock(
+            url="https://2gis.ru/moscow/firm/123",
+            text=Mock(return_value='''
+                <title>Позитроника, магазин — 2ГИС</title>
+                <div>бульвар Строителей, 4к1</div>
+                <a href="tel:+78003330333">Показать телефон</a>
+            '''),
+        )
+        lookup = TwoGisBrowserLookup.__new__(TwoGisBrowserLookup)
+        lookup.context = Mock()
+        lookup.context.request.get = Mock(side_effect=[search, detail])
+        result = lookup.lookup("Позитроника", "бульвар Строителей, 4к1", "Москва")
+        self.assertEqual([(item.phone, item.source) for item in result], [("+78003330333", "2gis")])
 
 
 class MapEnrichmentViewTest(TestCase):

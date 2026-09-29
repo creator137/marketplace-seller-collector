@@ -102,6 +102,11 @@ def city_slug(city):
     return CITY_SLUGS.get(normalized) or normalized.translate(TRANSLIT).replace(" ", "_") or "moscow"
 
 
+def _html_text(value):
+    value = re.sub(r"<(?:script|style)[^>]*>.*?</(?:script|style)>", " ", value, flags=re.I | re.S)
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", value)).split())
+
+
 def _walk_candidates(value):
     if isinstance(value, dict):
         phones = value.get("phones") or value.get("contactGroups") or []
@@ -178,7 +183,7 @@ class YandexMapsLookup:
 
 
 class TwoGisBrowserLookup:
-    """Use one persistent normal browser session; never launch a browser per seller."""
+    """Use HTTP requests authenticated by one persistent normal browser session."""
 
     def __enter__(self):
         lock_path = Path(settings.BASE_DIR) / "runtime" / "maps_2gis.lock"
@@ -187,63 +192,48 @@ class TwoGisBrowserLookup:
         fcntl.flock(self.lock, fcntl.LOCK_EX)
         self.playwright, self.browser = _connect()
         self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context(locale="ru-RU")
-        self.page = self.context.new_page()
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        try:
-            self.page.close()
-        finally:
-            self.playwright.stop()
-            self.lock.close()
+        self.playwright.stop()
+        self.lock.close()
 
     def lookup(self, name, address, city=""):
         query = " ".join(part for part in (name, address) if part).strip()
         if not query:
             return []
         search_url = f"https://2gis.ru/{city_slug(city)}/search/" + quote(query)
-        self.page.goto(search_url, wait_until="commit", timeout=min(settings.MAPS_BROWSER_TIMEOUT, 15) * 1000)
-        self.page.wait_for_timeout(2500)
-        if "captcha.2gis" in self.page.url or "подозрительную активность" in self.page.locator("body").inner_text().lower():
+        response = self.context.request.get(search_url, timeout=settings.MAPS_BROWSER_TIMEOUT * 1000)
+        html = response.text()
+        if "captcha.2gis" in response.url or "подозрительную активность" in html.lower():
             raise MapsBlockedError("2ГИС запросил проверку в серверном Chromium")
-
-        links = self.page.locator('a[href*="/firm/"]')
         urls = []
-        for index in range(min(links.count(), 12)):
-            link = links.nth(index)
-            href = link.get_attribute("href") or ""
-            try:
-                card_text = link.inner_text(timeout=1000)
-                if not card_text:
-                    card_text = link.evaluate("el => el.parentElement ? el.parentElement.innerText : ''")
-            except Exception:
-                card_text = ""
-            if href and match_quality(name, address, card_text, card_text) and href not in urls:
-                urls.append(href if href.startswith("http") else "https://2gis.ru" + href)
+        for match in re.finditer(r'href=["\']([^"\']*/firm/\d+[^"\']*)["\']', html, re.I):
+            href = unescape(match.group(1))
+            # The SSR search card is adjacent to its link. Pre-filter here so
+            # only matching cards need a detail HTTP request.
+            card_text = _html_text(html[max(0, match.start() - 1500):match.end() + 2500])
+            if match_quality(name, address, card_text, card_text):
+                clean_url = (href if href.startswith("http") else "https://2gis.ru" + href).split("?", 1)[0]
+                if clean_url not in urls:
+                    urls.append(clean_url)
 
         for firm_url in urls[:2]:
-            self.page.goto(firm_url, wait_until="commit", timeout=min(settings.MAPS_BROWSER_TIMEOUT, 15) * 1000)
-            self.page.wait_for_timeout(1200)
-            body = self.page.locator("body").inner_text()
-            title = self.page.locator("h1").first.inner_text() if self.page.locator("h1").count() else self.page.title().split("—", 1)[0]
+            detail_response = self.context.request.get(
+                firm_url, timeout=settings.MAPS_BROWSER_TIMEOUT * 1000,
+            )
+            detail_html = detail_response.text()
+            if "captcha.2gis" in detail_response.url or "подозрительную активность" in detail_html.lower():
+                raise MapsBlockedError("2ГИС запросил проверку в серверном Chromium")
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", detail_html, re.I | re.S)
+            title = _html_text(title_match.group(1)) if title_match else ""
+            body = _html_text(detail_html)
             quality = match_quality(name, address, title, body)
             if not quality:
                 continue
-            for pattern in (re.compile("Показать телефон", re.I), re.compile("Телефон", re.I)):
-                buttons = self.page.get_by_text(pattern, exact=False)
-                if buttons.count():
-                    try:
-                        buttons.first.click(timeout=2000)
-                        self.page.wait_for_timeout(500)
-                    except Exception:
-                        pass
-                    break
-            phones = []
-            tel_links = self.page.locator('a[href^="tel:"]')
-            for index in range(tel_links.count()):
-                phones.append((tel_links.nth(index).get_attribute("href") or "").removeprefix("tel:"))
+            phones = [unescape(value) for value in re.findall(r'href=["\']tel:([^"\']+)', detail_html, re.I)]
             if not phones:
-                phones = re.findall(r"(?:\+7|8)[\s\-(]*\d{3}\)?[\s\-]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}", self.page.locator("body").inner_text())
+                phones = re.findall(r"(?:\+7|8)[\s\-(]*\d{3}\)?[\s\-]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}", body)
             if phones:
                 time.sleep(max(0, settings.MAPS_RATE_DELAY))
                 return [MapContact(phone, "2gis", quality, firm_url) for phone in dict.fromkeys(phones)]
