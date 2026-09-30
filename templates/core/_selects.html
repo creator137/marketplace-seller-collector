@@ -1,15 +1,21 @@
 <div class="mb-3">
   <label class="form-label required" for="cities">Города</label>
-  <select name="cities" id="cities" class="form-select" multiple size="4" required>
+  <input class="form-control mb-2" type="search" id="city-filter"
+         placeholder="Начните вводить город, например Казань"
+         oninput="filterCollectorSelect(this, 'cities')" autocomplete="off">
+  <select name="cities" id="cities" class="form-select" multiple size="7" required>
     <option value="__all__">Все города</option>
     {% for city in cities %}
       <option value="{{ city.id }}">{{ city.name }}</option>
     {% endfor %}
   </select>
-  <small class="form-hint">Ищем продавцов этих городов. Добавить город можно в «Справочники».</small>
+  <small class="form-hint">Введите часть названия, затем выберите один или несколько городов. «Все города» запускает общий сбор.</small>
 </div>
 <div class="mb-3">
   <label class="form-label required" for="categories">Категории</label>
+  <input class="form-control mb-2" type="search" id="category-filter"
+         placeholder="Начните вводить категорию, например наушники"
+         oninput="filterCollectorSelect(this, 'categories')" autocomplete="off">
   <select name="categories" id="categories" class="form-select" multiple size="8" required>
     <option value="__all__">Все категории</option>
     {% for cat in categories %}
@@ -18,4 +24,18 @@
       <option disabled>Категории не заданы — добавьте их в справочниках</option>
     {% endfor %}
   </select>
+  <small class="form-hint">
+    Показаны категории выбранного маркетплейса. Справочник обновляется автоматически раз в сутки;
+    «Все категории» выбирает весь активный список.
+  </small>
 </div>
+<script>
+  function filterCollectorSelect(input, selectId) {
+    const query = input.value.trim().toLocaleLowerCase('ru');
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    Array.from(select.options).forEach((option, index) => {
+      option.hidden = index > 0 && query && !option.text.toLocaleLowerCase('ru').includes(query);
+    });
+  }
+</script>

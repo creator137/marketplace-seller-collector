@@ -100,6 +100,7 @@ def catalogs(request):
     if section not in ("cities", "categories", "sessions"):
         section = "cities"
     marketplace_filter = request.GET.get("marketplace", Marketplace.OZON)
+    catalog_query = (request.GET.get("q") or "").strip()
     if marketplace_filter not in Marketplace.values:
         marketplace_filter = Marketplace.OZON
 
@@ -279,10 +280,22 @@ def catalogs(request):
             "file_status": MarketplaceSession.file_status(value),
         })
 
+    cities_qs = City.objects.all()
+    categories_qs = Category.objects.filter(marketplace=marketplace_filter)
+    if catalog_query:
+        cities_qs = cities_qs.filter(
+            Q(name__icontains=catalog_query) | Q(dest_code__icontains=catalog_query),
+        )
+        categories_qs = categories_qs.filter(
+            Q(title__icontains=catalog_query) | Q(external_id__icontains=catalog_query),
+        )
     return render(request, "core/catalogs.html", {
         "section": section,
-        "cities": City.objects.all(),
-        "categories": Category.objects.filter(marketplace=marketplace_filter),
+        "cities": cities_qs[:500],
+        "categories": categories_qs[:500],
+        "catalog_query": catalog_query,
+        "cities_total": cities_qs.count(),
+        "categories_total": categories_qs.count(),
         "marketplace_filter": marketplace_filter,
         "marketplaces": Marketplace.choices,
         "sessions": sessions,
@@ -333,6 +346,7 @@ def jobs_history(request):
 def results(request):
     marketplace = request.GET.get("marketplace", "")
     city_id = request.GET.get("city", "")
+    city_q = request.GET.get("city_q", "").strip()
     has_contacts = request.GET.get("has_contacts", "")
     q = request.GET.get("q", "").strip()
     job_id = request.GET.get("job", "")
@@ -349,6 +363,14 @@ def results(request):
             qs = qs.filter(city__in=job_filter.cities.all()).distinct()
     if city_id:
         qs = qs.filter(city_id=city_id)
+    if city_q:
+        normalized_city_q = city_q.casefold()
+        matching_city_ids = [
+            city_pk
+            for city_pk, city_name in City.objects.filter(is_active=True).values_list("pk", "name")
+            if normalized_city_q in city_name.casefold()
+        ]
+        qs = qs.filter(city_id__in=matching_city_ids)
     if has_contacts:
         cond = Q(contacts__type="phone") | Q(contacts__type="city_phone") | Q(contacts__type="email")
         qs = qs.filter(cond).distinct()
@@ -377,7 +399,7 @@ def results(request):
         "sellers": sellers, "total": total, "page": page, "pages": pages,
         "cities": City.objects.all(), "marketplace": marketplace,
         "view_marketplaces": Marketplace.choices,
-        "city_id": city_id, "has_contacts": has_contacts, "q": q,
+        "city_id": city_id, "city_q": city_q, "has_contacts": has_contacts, "q": q,
         "job_id": job_id,
         "enrichment": enrichment,
         "querystring": qs_str,

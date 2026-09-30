@@ -176,6 +176,15 @@ class ViewsTest(TestCase):
         self.assertContains(r, "В Уфе")
         self.assertNotContains(r, "Без города")
 
+    def test_results_city_name_search(self):
+        ufa = City.objects.get_or_create(name="Уфа")[0]
+        kazan = City.objects.get_or_create(name="Казань")[0]
+        Seller.objects.create(marketplace=Marketplace.WB, external_seller_id="ufa", name="Уфимский", city=ufa)
+        Seller.objects.create(marketplace=Marketplace.WB, external_seller_id="kazan", name="Казанский", city=kazan)
+        response = self.client.get("/results/?city_q=уфа")
+        self.assertContains(response, "Уфимский")
+        self.assertNotContains(response, "Казанский")
+
     def test_start_job_requires_city(self):
         cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
         r = self.client.post("/", {

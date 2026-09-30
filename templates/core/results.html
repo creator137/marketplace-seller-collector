@@ -43,12 +43,11 @@
       </div>
       <div class="col-md-2">
         <label class="form-label">Город</label>
-        <select name="city" class="form-select">
-          <option value="">Все города</option>
-          {% for city in cities %}
-            <option value="{{ city.id }}" {% if city_id == city.id|stringformat:"s" %}selected{% endif %}>{{ city.name }}</option>
-          {% endfor %}
-        </select>
+        <input class="form-control" type="search" name="city_q" list="city-options"
+               placeholder="Название города" value="{{ city_q }}" autocomplete="off">
+        <datalist id="city-options">
+          {% for city in cities %}<option value="{{ city.name }}">{% endfor %}
+        </datalist>
       </div>
       <div class="col-md-3">
         <label class="form-label">Поиск</label>

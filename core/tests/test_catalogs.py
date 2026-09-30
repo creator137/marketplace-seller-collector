@@ -16,6 +16,30 @@ class CatalogsViewsTest(TestCase):
         self.assertContains(r, "Категории")
         self.assertContains(r, "Сессии")
 
+    def test_city_search(self):
+        City.objects.create(name="Казань")
+        City.objects.create(name="Самара")
+        response = self.client.get("/catalogs/?section=cities&q=каз")
+        self.assertContains(response, "Казань")
+        self.assertNotContains(response, "Самара")
+
+    def test_category_search(self):
+        Category.objects.create(marketplace=Marketplace.WB, title="Наушники", external_id="headphones")
+        Category.objects.create(marketplace=Marketplace.WB, title="Обувь", external_id="shoes")
+        response = self.client.get("/catalogs/?section=categories&marketplace=wildberries&q=науш")
+        self.assertContains(response, "Наушники")
+        self.assertNotContains(response, "Обувь")
+
+    def test_collection_selects_have_search_fields(self):
+        response = self.client.get("/selects/?marketplace=wildberries")
+        self.assertContains(response, 'id="city-filter"')
+        self.assertContains(response, 'id="category-filter"')
+
+    def test_instruction_is_ui_only(self):
+        response = self.client.get("/how-it-works/")
+        self.assertContains(response, "Открыть Chromium")
+        self.assertNotContains(response, "python manage.py")
+
     def test_sessions_section(self):
         r = self.client.get("/catalogs/?section=sessions")
         self.assertEqual(r.status_code, 200)

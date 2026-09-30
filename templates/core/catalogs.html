@@ -24,8 +24,15 @@
 
 {% if section == 'cities' %}
 <div class="card">
-  <div class="card-header">
+  <div class="card-header d-flex align-items-center flex-wrap gap-2">
     <h3 class="card-title">Города</h3>
+    <form method="get" class="ms-auto d-flex gap-2">
+      <input type="hidden" name="section" value="cities">
+      <input class="form-control form-control-sm" type="search" name="q"
+             value="{{ catalog_query }}" placeholder="Найти город">
+      <button class="btn btn-sm btn-outline-primary" type="submit">Найти</button>
+      {% if catalog_query %}<a class="btn btn-sm btn-outline-secondary" href="?section=cities">Сбросить</a>{% endif %}
+    </form>
   </div>
   <div class="card-body border-bottom">
     <form method="post" class="row g-2 align-items-end">
@@ -49,6 +56,7 @@
     </small>
   </div>
   <div class="table-responsive">
+    <div class="px-3 pt-3 text-secondary small">Найдено: {{ cities_total }}{% if cities_total > 500 %}; показаны первые 500{% endif %}</div>
     <table class="table card-table table-vcenter table-hover mb-0">
       <thead>
         <tr>
@@ -98,14 +106,31 @@
 <div class="card">
   <div class="card-header d-flex align-items-center flex-wrap gap-2">
     <h3 class="card-title mb-0">Категории</h3>
-    <form method="get" class="ms-auto">
+    <form method="get" class="ms-auto d-flex gap-2">
       <input type="hidden" name="section" value="categories">
+      <input class="form-control form-control-sm" type="search" name="q"
+             value="{{ catalog_query }}" placeholder="Название или ID">
       <select name="marketplace" class="form-select form-select-sm" onchange="this.form.submit()">
         {% for value, label in marketplaces %}
           <option value="{{ value }}" {% if marketplace_filter == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
+      <button class="btn btn-sm btn-outline-primary" type="submit">Найти</button>
+      {% if catalog_query %}<a class="btn btn-sm btn-outline-secondary" href="?section=categories&marketplace={{ marketplace_filter }}">Сбросить</a>{% endif %}
     </form>
+  </div>
+  <div class="card-body border-bottom bg-azure-lt">
+    {% if marketplace_filter == 'wildberries' %}
+      <strong>Wildberries:</strong> категории ежедневно загружаются из публичного меню WB.
+      Служебное значение содержит раздел каталога и поисковый ключ.
+    {% elif marketplace_filter == 'yandex_market' %}
+      <strong>Яндекс.Маркет:</strong> категории ежедневно загружаются из официального файла категорий Яндекса.
+      Служебное значение — поисковое название категории.
+    {% else %}
+      <strong>Ozon:</strong> категории загружаются из сохранённого дерева каталога Ozon,
+      потому что серверный IP сейчас блокируется самой площадкой. Служебное значение — путь категории.
+    {% endif %}
+    Пользователь выбирает обычное название; служебный ID нужен только сборщику.
   </div>
   <div class="card-body border-bottom">
     <form method="post" class="row g-2 align-items-end">
@@ -133,12 +158,13 @@
       </div>
     </form>
     <small class="form-hint d-block mt-2">
-      Ozon / Яндекс.Маркет — поисковый текст или путь категории.
-      Wildberries — обычно <code>shard|query</code> или просто поисковый запрос.
+      Обычно категории добавляются автоматически. Вручную: Ozon / Яндекс.Маркет — поисковый текст или путь категории;
+      Wildberries — служебная связка раздела и запроса.
       «Удалить» убирает категорию из справочника (из старых заданий она пропадёт).
     </small>
   </div>
   <div class="table-responsive">
+    <div class="px-3 pt-3 text-secondary small">Найдено: {{ categories_total }}{% if categories_total > 500 %}; показаны первые 500{% endif %}</div>
     <table class="table card-table table-vcenter table-hover mb-0">
       <thead>
         <tr>
@@ -193,13 +219,13 @@
   </div>
   <div class="card-body">
     <p class="text-secondary mb-4">
-      Cookies из браузера (строка Cookie или JSON). После сохранения файл
-      <code>runtime/sessions/&lt;маркетплейс&gt;.json</code> обновляется сразу —
-      новые задания подхватят сессию без перезапуска.
+      Здесь обновляется браузерная сессия площадки. Новые и приостановленные задания
+      подхватывают её автоматически — перезапускать сервис не нужно.
     </p>
     <div class="alert alert-info mb-4">
-      <strong>Обновление без команд:</strong> нажмите «Открыть Chromium», пройдите
-      проверку площадки в новой вкладке, вернитесь сюда и нажмите «Сохранить cookies».
+      <strong>Что нажимать:</strong> нажмите «1. Открыть Chromium», дождитесь обычной страницы
+      площадки и при необходимости пройдите проверку. Затем закройте вкладку Chromium,
+      вернитесь сюда и нажмите «2. Сохранить cookies».
       {% if browser_password %}Пароль окна: <code>{{ browser_password }}</code>.{% endif %}
     </div>
     <div class="row g-4">
