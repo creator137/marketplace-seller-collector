@@ -2,6 +2,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 from django.test import TestCase
+from django.test import override_settings
 from openpyxl import load_workbook
 
 from core.adapters.base import CollectionBlocked, MarketplaceAdapter, SellerData
@@ -172,6 +173,14 @@ class CollectionPipelineTest(TestCase):
         self.assertEqual(job.source_status, "success")
         self.assertGreaterEqual(job.found, 2)
         self.assertEqual(adapter.iter_calls, 2)
+
+    @override_settings(COLLECT_MAX_SELLERS=0)
+    def test_city_collection_has_no_hidden_raw_seller_cap(self):
+        ufa = City.objects.get_or_create(name="Уфа")[0]
+        job = self.make_job(cities=[ufa])
+        from core.tasks import _raw_safety_cap
+
+        self.assertEqual(_raw_safety_cap(job, [ufa]), 0)
 
     def test_blocked_detail_is_retryable_on_resume(self):
         job = self.make_job()

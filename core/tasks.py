@@ -149,13 +149,8 @@ def _discovery_exhausted(job, categories, cities) -> bool:
 
 
 def _raw_safety_cap(job, cities) -> int:
-    """Hard stop on total discovered refs when hunting for city matches."""
-    target = _target(job) or 0
-    if settings.COLLECT_MAX_SELLERS:
-        return settings.COLLECT_MAX_SELLERS
-    if cities:
-        return max(target * 40, target + 200, 100)
-    return target or 0
+    """Optional global hard stop; zero means no artificial discovery limit."""
+    return int(settings.COLLECT_MAX_SELLERS or 0)
 
 
 def _save_discovery_checkpoint(job, checkpoint, job_count, cities):
@@ -353,7 +348,7 @@ def run_collection_job(job_id: int):
                 break
 
             before = job.job_sellers.count()
-            if before >= safety_cap:
+            if safety_cap and before >= safety_cap:
                 log.info(
                     "Job %s hit discovery safety cap %s with only %s city matches",
                     job_id, safety_cap, matched,
@@ -370,7 +365,9 @@ def run_collection_job(job_id: int):
                 batch = max(need * 3, need)
             else:
                 batch = need
-            raw_cap = min(before + batch, safety_cap)
+            raw_cap = before + batch
+            if safety_cap:
+                raw_cap = min(raw_cap, safety_cap)
 
             created = _discover(job, adapter, categories, cities, raw_cap=raw_cap)
             _process_details(job, cities)
