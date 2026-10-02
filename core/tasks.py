@@ -128,13 +128,24 @@ def _refresh_progress(job, cities):
     job.save(update_fields=["total", "found", "processed", "errors_count", "checkpoint"])
 
 
-def _discovery_exhausted(job) -> bool:
+def _discovery_exhausted(job, categories, cities) -> bool:
+    """Return true only when every requested category/destination is finished.
+
+    Checkpoint states are created lazily. Looking only at existing states makes
+    the first exhausted category look like the whole multi-category job is
+    exhausted, which used to finish large WB jobs prematurely.
+    """
     checkpoint = job.checkpoint or {}
     states = checkpoint.get("discovery") or {}
-    if not states:
+    expected_keys = {
+        _discovery_key(job, category, city)
+        for category in categories
+        for city in _search_cities(job, cities)
+    }
+    if not expected_keys:
         return False
     done = set(checkpoint.get("discovery_done") or [])
-    return all(state.get("finished") or key in done for key, state in states.items())
+    return all((states.get(key) or {}).get("finished") or key in done for key in expected_keys)
 
 
 def _raw_safety_cap(job, cities) -> int:
@@ -348,7 +359,7 @@ def run_collection_job(job_id: int):
                     job_id, safety_cap, matched,
                 )
                 break
-            if _discovery_exhausted(job) and not job.job_sellers.filter(
+            if _discovery_exhausted(job, categories, cities) and not job.job_sellers.filter(
                 detail_status__in=("pending", "retry", "blocked", "processing"),
             ).exists():
                 break
@@ -367,11 +378,11 @@ def run_collection_job(job_id: int):
                 break
 
             after = job.job_sellers.count()
-            if created == 0 and after == before and _discovery_exhausted(job):
+            if created == 0 and after == before and _discovery_exhausted(job, categories, cities):
                 break
             if after == before and not job.job_sellers.filter(
                 detail_status__in=("pending", "retry", "blocked"),
-            ).exists() and _discovery_exhausted(job):
+            ).exists() and _discovery_exhausted(job, categories, cities):
                 break
     except Exception as exc:
         status = _classify_error(exc)

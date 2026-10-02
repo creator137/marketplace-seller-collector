@@ -18,12 +18,13 @@
        {% endif %}>
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
       <span class="badge
-        {% if job.status == 'completed' %}bg-success-lt text-success
+        {% if job.status == 'completed' and job.source_status == 'partial' %}bg-warning-lt text-warning
+        {% elif job.status == 'completed' %}bg-success-lt text-success
         {% elif job.status == 'failed' %}bg-danger-lt text-danger
         {% elif job.status == 'running' %}bg-blue-lt text-blue
         {% elif job.status == 'paused' %}bg-warning-lt text-warning
         {% else %}bg-secondary-lt{% endif %}">
-        {{ job.get_status_display }}
+        {% if job.status == 'completed' and job.source_status == 'partial' %}Завершён частично{% else %}{{ job.get_status_display }}{% endif %}
       </span>
       <span class="text-secondary small">Источник: {{ job.source_status }}{% if job.retry_after %}; повторить после {{ job.retry_after|date:"d.m.Y H:i" }}{% endif %}</span>
     </div>
@@ -60,9 +61,9 @@
       <div class="alert {% if job.status == 'failed' %}alert-danger{% else %}alert-warning{% endif %} mt-3 mb-0">{{ job.error_message }}</div>
     {% endif %}
 
-    {% if job.status == 'paused' or job.status == 'failed' %}
+    {% if job.status == 'paused' or job.status == 'failed' or job.source_status == 'partial' %}
       <form method="post" action="{% url 'resume_job' job.id %}" class="mt-3">{% csrf_token %}
-        <button class="btn btn-warning" type="submit">Продолжить сбор</button>
+        <button class="btn btn-warning" type="submit">{% if job.source_status == 'partial' %}Продолжить до цели{% else %}Продолжить сбор{% endif %}</button>
       </form>
     {% endif %}
 

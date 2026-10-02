@@ -35,12 +35,13 @@
           <td>{{ job.get_marketplace_display }}</td>
           <td>
             <span class="badge
-              {% if job.status == 'completed' %}bg-success-lt text-success
+              {% if job.status == 'completed' and job.source_status == 'partial' %}bg-warning-lt text-warning
+              {% elif job.status == 'completed' %}bg-success-lt text-success
               {% elif job.status == 'failed' %}bg-danger-lt text-danger
               {% elif job.status == 'running' %}bg-blue-lt text-blue
               {% elif job.status == 'paused' %}bg-warning-lt text-warning
               {% else %}bg-secondary-lt{% endif %}">
-              {{ job.get_status_display }}
+              {% if job.status == 'completed' and job.source_status == 'partial' %}Завершён частично{% else %}{{ job.get_status_display }}{% endif %}
             </span>
           </td>
           <td>{% for c in job.cities.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</td>

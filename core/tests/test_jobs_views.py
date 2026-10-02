@@ -185,6 +185,20 @@ class ViewsTest(TestCase):
         self.assertContains(response, "Уфимский")
         self.assertNotContains(response, "Казанский")
 
+    def test_partial_job_is_not_shown_as_successful_completion(self):
+        job = CollectionJob.objects.create(
+            marketplace=Marketplace.WB,
+            status=CollectionJob.Status.COMPLETED,
+            source_status="partial",
+            max_sellers=100,
+            found=8,
+        )
+        history = self.client.get("/jobs/")
+        detail = self.client.get(f"/jobs/{job.id}/")
+        self.assertContains(history, "Завершён частично")
+        self.assertContains(detail, "Завершён частично")
+        self.assertContains(detail, "Продолжить до цели")
+
     def test_start_job_requires_city(self):
         cat = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
         r = self.client.post("/", {

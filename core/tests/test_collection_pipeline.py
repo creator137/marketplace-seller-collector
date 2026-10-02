@@ -64,6 +64,28 @@ class FakeStreamingAdapter(MarketplaceAdapter):
         )
 
 
+class MultiCategoryAdapter(FakeStreamingAdapter):
+    """First category has no city matches; the second one does."""
+
+    def iter_sellers(self, category, city=None, max_sellers=0, start_page=1, start_cursor=None):
+        self.iter_calls += 1
+        self.starts.append((start_page, start_cursor, max_sellers))
+        count = min(6, max_sellers or 6)
+        for idx in range(1, count + 1):
+            yield SellerData(
+                Marketplace.OZON,
+                f"category-{category.id}-seller-{idx}",
+                name=f"Category {category.id} seller {idx}",
+            ), {"page": 2, "cursor": None, "finished": idx == count}
+        yield None, {"page": 2, "cursor": None, "finished": True}
+
+    def fetch_seller(self, ref):
+        self.detail_calls += 1
+        first_category_id = min(self.category_ids)
+        address = "г Москва, Тверская 1" if ref.startswith(f"category-{first_category_id}-") else "г. Уфа, ул. Ленина, 1"
+        return SellerData(Marketplace.OZON, ref, name="Detailed", inn="7801234567", legal_address=address)
+
+
 class CollectionPipelineTest(TestCase):
     def make_job(self, cities=None):
         category = Category.objects.create(marketplace=Marketplace.OZON, external_id="q", title="Q")
@@ -129,6 +151,27 @@ class CollectionPipelineTest(TestCase):
         # Had to look at more than 2 raw refs because some are Москва.
         self.assertGreaterEqual(job.job_sellers.count(), matched)
         self.assertGreaterEqual(adapter.iter_calls, 1)
+
+    def test_finished_first_category_does_not_finish_whole_job(self):
+        ufa = City.objects.get_or_create(name="Уфа")[0]
+        job = self.make_job(cities=[ufa])
+        second = Category.objects.create(marketplace=Marketplace.OZON, external_id="q2", title="Q2")
+        job.categories.add(second)
+        job.max_sellers = 2
+        job.save(update_fields=["max_sellers"])
+        adapter = MultiCategoryAdapter()
+        adapter.category_ids = list(job.categories.values_list("id", flat=True))
+
+        with patch("core.tasks.get_adapter", return_value=adapter), patch("core.tasks.enrich_with_dadata"):
+            from core.tasks import run_collection_job
+
+            run_collection_job(job.id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, CollectionJob.Status.COMPLETED)
+        self.assertEqual(job.source_status, "success")
+        self.assertGreaterEqual(job.found, 2)
+        self.assertEqual(adapter.iter_calls, 2)
 
     def test_blocked_detail_is_retryable_on_resume(self):
         job = self.make_job()
